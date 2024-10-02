@@ -1,6 +1,6 @@
 export default async (request, context) => {
   // Your allowed Webflow domain
-  const allowedOrigins = ["https://rusus-supercool-site-e2e39a.design.webflow.com"];
+  const allowedOrigins = ["https://rusus-supercool-site-e2e39a.webflow.io"];
   const requestOrigin = request.headers.get("origin");
 
   // Check if the request's origin matches the allowed origin
@@ -23,8 +23,9 @@ export default async (request, context) => {
   // Respond with the API key, but ensure it's protected with CORS
   return new Response(JSON.stringify({ apiKey }), {
     headers: {
-      "Access-Control-Allow-Origin": requestOrigin, // Only allow the specific Webflow domain
+      "Access-Control-Allow-Origin": requestOrigin, // Allow the specific Webflow domain
       "Access-Control-Allow-Methods": "GET, OPTIONS", // Specify allowed methods
+      "Access-Control-Allow-Headers": "Content-Type", // Specify allowed headers
       "content-type": "application/json",
     },
   });
