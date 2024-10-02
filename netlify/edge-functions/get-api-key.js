@@ -6,7 +6,7 @@ export default async (request, context) => {
     return new Response(JSON.stringify({ error: 'API Key not found' }), {
       headers: {
         'content-type': 'application/json',
-        'Access-Control-Allow-Origin': '*', // Enable CORS
+        'Access-Control-Allow-Origin': 'https://rusus-supercool-site-e2e39a.webflow.io/', // Enable CORS
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type',
       },
@@ -17,7 +17,7 @@ export default async (request, context) => {
   return new Response(JSON.stringify({ apiKey }), {
     headers: {
       'content-type': 'application/json',
-      'Access-Control-Allow-Origin': '*', // Enable CORS
+      'Access-Control-Allow-Origin': 'https://rusus-supercool-site-e2e39a.webflow.io/', // Enable CORS
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     },
