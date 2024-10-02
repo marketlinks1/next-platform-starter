@@ -6,9 +6,9 @@ export default async (request, context) => {
     return new Response(JSON.stringify({ error: 'API Key not found' }), {
       headers: {
         'content-type': 'application/json',
-        'Access-Control-Allow-Origin': '*',  // Allow requests from any origin
+        'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type'
+        'Access-Control-Allow-Headers': 'Content-Type',
       },
     });
   }
@@ -17,9 +17,9 @@ export default async (request, context) => {
   return new Response(JSON.stringify({ apiKey }), {
     headers: {
       'content-type': 'application/json',
-      'Access-Control-Allow-Origin': '*',  // Allow requests from any origin
+      'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
+      'Access-Control-Allow-Headers': 'Content-Type',
     },
   });
 };
