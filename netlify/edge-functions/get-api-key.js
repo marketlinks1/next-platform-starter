@@ -1,6 +1,6 @@
 export default async (request, context) => {
-  // Retrieve API key from environment variables
-  const apiKey = process.env.FMP_API_KEY;
+  // Retrieve API key from Deno's environment
+  const apiKey = Deno.env.get("FMP_API_KEY");
 
   if (!apiKey) {
     return new Response(JSON.stringify({ error: 'API Key not found' }), {
