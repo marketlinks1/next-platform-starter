@@ -1,6 +1,6 @@
 export default async (request, context) => {
   // Your allowed Webflow domain
-  const allowedOrigins = ["https://rusus-supercool-site-e2e39a.webflow.io"];
+  const allowedOrigins = ["https://amldash.webflow.io"];
   const requestOrigin = request.headers.get("origin");
 
   // Check if the request's origin matches the allowed origin
