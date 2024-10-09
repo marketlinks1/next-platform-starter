@@ -14,3 +14,7 @@
 [[edge_functions]]
   path = "/.netlify/edge-functions/get-openai-api-key"
   function = "get-openai-api-key"
+
+[[edge_functions]]
+  path = "/.netlify/edge-functions/get-firebase-api-key"
+  function = "get-firebase-api-key"
