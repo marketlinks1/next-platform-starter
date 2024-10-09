@@ -1,14 +1,16 @@
-// OpenAI API Key Endpoint
 export default async (request, context) => {
   // Your allowed Webflow domain
   const allowedOrigins = ["https://amldash.webflow.io"];
   const requestOrigin = request.headers.get("origin");
 
-  // Check if the request's origin matches the allowed origin
+  // Set CORS headers
   if (!allowedOrigins.includes(requestOrigin)) {
     return new Response("Forbidden", {
       status: 403,
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "Access-Control-Allow-Origin": requestOrigin,
+      },
     });
   }
 
@@ -18,7 +20,10 @@ export default async (request, context) => {
   // Check if OpenAI API Key exists
   if (!openAiApiKey) {
     return new Response(JSON.stringify({ error: "OpenAI API Key not found" }), {
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "Access-Control-Allow-Origin": requestOrigin,
+      },
     });
   }
 
