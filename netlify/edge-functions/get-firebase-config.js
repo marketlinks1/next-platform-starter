@@ -1,4 +1,5 @@
-// Firebase Configuration Endpoint
+// get-firebase-config.js
+
 export default async (request, context) => {
   // Your allowed Webflow domain
   const allowedOrigins = ["https://amldash.webflow.io"];
@@ -23,17 +24,17 @@ export default async (request, context) => {
     measurementId: Deno.env.get("FIREBASE_MEASUREMENT_ID"),
   };
 
-  // Check if firebaseConfig exists
+  // Check if Firebase configuration is available
   if (!firebaseConfig.apiKey) {
     return new Response(JSON.stringify({ error: "Firebase config not found" }), {
       headers: { "content-type": "application/json" },
     });
   }
 
-  // Respond with the Firebase config, but ensure it's protected with CORS
+  // Respond with the Firebase configuration, but ensure it's protected with CORS
   return new Response(JSON.stringify(firebaseConfig), {
     headers: {
-      "Access-Control-Allow-Origin": requestOrigin,
+      "Access-Control-Allow-Origin": requestOrigin, // Allow only the specific domain
       "Access-Control-Allow-Methods": "GET, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
       "content-type": "application/json",
