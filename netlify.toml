@@ -4,5 +4,14 @@
   edge_functions = "netlify/edge-functions"
 
 [[edge_functions]]
-  path = "/.netlify/edge-functions/get-api-key"
+    path = "/.netlify/edge-functions/get-api-key"
   function = "get-api-key"
+
+[[edge_functions]]
+  # Define the new paths for Firebase and OpenAI configurations
+  path = "/get-firebase-config"
+  function = "get-firebase-config"
+
+[[edge_functions]]
+  path = "/get-openai-api-key"
+  function = "get-openai-api-key"
