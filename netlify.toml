@@ -18,3 +18,11 @@
 [[edge_functions]]
   path = "/.netlify/edge-functions/get-firebase-api-key"
   function = "get-firebase-api-key"
+
+[[edge_functions]]
+  path = "/.netlify/edge-functions/get-firebase-auth-domain"
+  function = "get-firebase-auth-domain"
+
+[[edge_functions]]
+  path = "/.netlify/edge-functions/get-firebase-storage-bucket"
+  function = "get-firebase-storage-bucket"
