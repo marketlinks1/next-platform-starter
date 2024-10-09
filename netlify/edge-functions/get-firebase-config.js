@@ -1,15 +1,16 @@
-// get-firebase-config.js
-
 export default async (request, context) => {
   // Your allowed Webflow domain
   const allowedOrigins = ["https://amldash.webflow.io"];
   const requestOrigin = request.headers.get("origin");
 
-  // Check if the request's origin matches the allowed origin
+  // Set CORS headers
   if (!allowedOrigins.includes(requestOrigin)) {
     return new Response("Forbidden", {
       status: 403,
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "Access-Control-Allow-Origin": requestOrigin,
+      },
     });
   }
 
@@ -24,17 +25,20 @@ export default async (request, context) => {
     measurementId: Deno.env.get("FIREBASE_MEASUREMENT_ID"),
   };
 
-  // Check if Firebase configuration is available
+  // Check if firebaseConfig exists
   if (!firebaseConfig.apiKey) {
     return new Response(JSON.stringify({ error: "Firebase config not found" }), {
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "Access-Control-Allow-Origin": requestOrigin,
+      },
     });
   }
 
-  // Respond with the Firebase configuration, but ensure it's protected with CORS
+  // Respond with the Firebase config, with CORS headers
   return new Response(JSON.stringify(firebaseConfig), {
     headers: {
-      "Access-Control-Allow-Origin": requestOrigin, // Allow only the specific domain
+      "Access-Control-Allow-Origin": requestOrigin,
       "Access-Control-Allow-Methods": "GET, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
       "content-type": "application/json",
