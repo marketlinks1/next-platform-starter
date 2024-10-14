@@ -85,59 +85,63 @@ exports.handler = async (event, context) => {
       console.log(`No cached data found for symbol: ${symbol.toUpperCase()}. Fetching new data.`);
     }
 
-    // Fetch comprehensive stock data from Financial Modeling Prep API using a single endpoint
+    // Fetch comprehensive stock data from Financial Modeling Prep API using the Company Outlook endpoint
     const fmpApiKey = process.env.FMP_API_KEY;
-    const stockApiUrl = `https://financialmodelingprep.com/api/v4/company-outlook?symbol=${symbol.toUpperCase()}&apikey=${fmpApiKey}`;
-    console.log(`Fetching stock data from URL: ${stockApiUrl}`);
+    const symbolUpper = symbol.toUpperCase();
 
-    const stockDataResponse = await fetch(stockApiUrl);
-    console.log(`Financial Modeling Prep API response status: ${stockDataResponse.status}`);
+    // Fetch Company Outlook data
+    const companyOutlookUrl = `https://financialmodelingprep.com/api/v4/company-outlook?symbol=${symbolUpper}&apikey=${fmpApiKey}`;
+    console.log(`Fetching Company Outlook data from URL: ${companyOutlookUrl}`);
 
-    if (!stockDataResponse.ok) {
-      const errorText = await stockDataResponse.text();
-      console.error(`Financial Modeling Prep API error: ${stockDataResponse.status} ${stockDataResponse.statusText} - ${errorText}`);
-      throw new Error(`Financial Modeling Prep API error: ${stockDataResponse.status} ${stockDataResponse.statusText}`);
+    const companyOutlookResponse = await fetch(companyOutlookUrl);
+    console.log(`Company Outlook API response status: ${companyOutlookResponse.status}`);
+
+    if (!companyOutlookResponse.ok) {
+      const errorText = await companyOutlookResponse.text();
+      console.error(`Company Outlook API error: ${companyOutlookResponse.status} ${companyOutlookResponse.statusText} - ${errorText}`);
+      throw new Error(`Company Outlook API error: ${companyOutlookResponse.status} ${companyOutlookResponse.statusText}`);
     }
 
-    const stockData = await stockDataResponse.json();
-    console.log(`Stock data received: ${JSON.stringify(stockData)}`);
+    const companyOutlookData = await companyOutlookResponse.json();
+    console.log(`Company Outlook data received: ${JSON.stringify(companyOutlookData)}`);
 
-    // Remove 'insideTrades' from the response
-    if (stockData.insideTrades) {
-      delete stockData.insideTrades;
-      console.log('Removed "insideTrades" from the API response.');
+    // Remove 'insideTrades' from the response if present
+    if (companyOutlookData.insideTrades) {
+      delete companyOutlookData.insideTrades;
+      console.log('Removed "insideTrades" from the Company Outlook data.');
     }
 
     // Fetch ESG data
-    const esgApiUrl = `https://financialmodelingprep.com/api/v4/esg-environmental-social-governance-data?symbol=${symbol.toUpperCase()}&apikey=${fmpApiKey}`;
+    const esgApiUrl = `https://financialmodelingprep.com/api/v4/esg-environmental-social-governance-data?symbol=${symbolUpper}&apikey=${fmpApiKey}`;
     console.log(`Fetching ESG data from URL: ${esgApiUrl}`);
 
-    const esgDataResponse = await fetch(esgApiUrl);
-    console.log(`ESG data response status: ${esgDataResponse.status}`);
+    const esgResponse = await fetch(esgApiUrl);
+    console.log(`ESG data API response status: ${esgResponse.status}`);
 
-    if (!esgDataResponse.ok) {
-      const errorText = await esgDataResponse.text();
-      console.error(`ESG data API error: ${esgDataResponse.status} ${esgDataResponse.statusText} - ${errorText}`);
-      throw new Error(`ESG data API error: ${esgDataResponse.status} ${esgDataResponse.statusText}`);
+    if (!esgResponse.ok) {
+      const errorText = await esgResponse.text();
+      console.error(`ESG data API error: ${esgResponse.status} ${esgResponse.statusText} - ${errorText}`);
+      throw new Error(`ESG data API error: ${esgResponse.status} ${esgResponse.statusText}`);
     }
 
-    const esgDataArray = await esgDataResponse.json();
+    const esgDataArray = await esgResponse.json();
     console.log(`ESG data received: ${JSON.stringify(esgDataArray)}`);
 
-    // Include ESG data into stockData
+    // Include ESG data into the companyOutlookData
     if (esgDataArray && esgDataArray.length > 0) {
       const latestEsgData = esgDataArray[0];
-      stockData.esgData = latestEsgData;
+      companyOutlookData.esgData = latestEsgData;
     } else {
       console.log('No ESG data available.');
     }
 
     // Fetch Technical Indicators data
-    const technicalIndicatorsApiUrl = `https://financialmodelingprep.com/api/v3/technical_indicator/monthly/${symbol.toUpperCase()}?type=stock&indicator=rsi,sma,ema,macd&apikey=${fmpApiKey}`;
-    console.log(`Fetching Technical Indicators data from URL: ${technicalIndicatorsApiUrl}`);
+    // For example, fetching RSI (Relative Strength Index) as technical indicator
+    const technicalIndicatorsUrl = `https://financialmodelingprep.com/api/v3/technical_indicator/daily/${symbolUpper}?period=14&type=rsi&apikey=${fmpApiKey}`;
+    console.log(`Fetching Technical Indicators data from URL: ${technicalIndicatorsUrl}`);
 
-    const technicalIndicatorsResponse = await fetch(technicalIndicatorsApiUrl);
-    console.log(`Technical Indicators response status: ${technicalIndicatorsResponse.status}`);
+    const technicalIndicatorsResponse = await fetch(technicalIndicatorsUrl);
+    console.log(`Technical Indicators API response status: ${technicalIndicatorsResponse.status}`);
 
     if (!technicalIndicatorsResponse.ok) {
       const errorText = await technicalIndicatorsResponse.text();
@@ -148,42 +152,37 @@ exports.handler = async (event, context) => {
     const technicalIndicatorsData = await technicalIndicatorsResponse.json();
     console.log(`Technical Indicators data received: ${JSON.stringify(technicalIndicatorsData)}`);
 
-    // Include Technical Indicators data into stockData
+    // Include Technical Indicators data into the companyOutlookData
     if (technicalIndicatorsData && technicalIndicatorsData.length > 0) {
-      // Assuming the data is an array sorted by date, take the latest data point
-      const latestTechnicalIndicators = technicalIndicatorsData[technicalIndicatorsData.length - 1];
-      stockData.technicalIndicators = latestTechnicalIndicators;
+      // Assuming the data is sorted by date in descending order, take the latest data point
+      const latestTechnicalIndicator = technicalIndicatorsData[0];
+      companyOutlookData.technicalIndicators = latestTechnicalIndicator;
     } else {
       console.log('No Technical Indicators data available.');
     }
 
-    // Define the prompt for OpenAI using the consolidated data
+    // Prepare the data to feed into the AI
+    // Remove any unnecessary data to keep the prompt within the token limit
+    // For example, remove 'stockNews' and 'splitsHistory' if not needed
+
+    // Remove 'stockNews' and 'splitsHistory' to reduce the data size
+    if (companyOutlookData.stockNews) {
+      delete companyOutlookData.stockNews;
+      console.log('Removed "stockNews" from the Company Outlook data.');
+    }
+    if (companyOutlookData.splitsHistory) {
+      delete companyOutlookData.splitsHistory;
+      console.log('Removed "splitsHistory" from the Company Outlook data.');
+    }
+
+    // Prepare the prompt for the AI
+    const promptData = JSON.stringify(companyOutlookData, null, 2);
+
     const prompt = `
       Analyze the following stock data and provide an investment recommendation.
 
-      **Stock Information:**
-      - **Name:** ${stockData.profile.companyName} (${stockData.profile.symbol})
-      - **Current Price:** $${stockData.profile.price}
-      - **Percentage Change:** ${stockData.profile.changesPercentage || 'N/A'}%
-      - **Volume:** ${stockData.profile.volAvg || 'N/A'}
-      - **Market Cap:** $${stockData.profile.mktCap || 'N/A'}
-      - **P/E Ratio:** ${stockData.ratios && stockData.ratios[0] ? stockData.ratios[0].priceEarningsRatioTTM : 'N/A'}
-
-      ${stockData.technicalIndicators ? `
-      **Technical Indicators:**
-      - **50-Day Moving Average (SMA50):** ${stockData.technicalIndicators.sma50 || 'N/A'}
-      - **200-Day Moving Average (SMA200):** ${stockData.technicalIndicators.sma200 || 'N/A'}
-      - **RSI:** ${stockData.technicalIndicators.rsi || 'N/A'}
-      - **MACD:** ${stockData.technicalIndicators.macd || 'N/A'}
-      ` : ''}
-
-      ${stockData.esgData ? `
-      **ESG Data:**
-      - **Environment Score:** ${stockData.esgData.environmentScore || 'N/A'}
-      - **Social Score:** ${stockData.esgData.socialScore || 'N/A'}
-      - **Governance Score:** ${stockData.esgData.governanceScore || 'N/A'}
-      - **Total ESG Score:** ${stockData.esgData.totalEsg || 'N/A'}
-      ` : ''}
+      **Stock Data:**
+      ${promptData}
 
       **Task:**
       Based on the above data, provide an investment recommendation. The response should be in JSON format as shown below:
@@ -215,7 +214,7 @@ exports.handler = async (event, context) => {
       for (let attempt = 1; attempt <= retries; attempt++) {
         try {
           console.log(`Attempt ${attempt}: Sending prompt to OpenAI`);
-          console.log(`Prompt: ${prompt}`);
+          // console.log(`Prompt: ${prompt}`);
 
           const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
@@ -326,12 +325,12 @@ exports.handler = async (event, context) => {
 
     // Store the AI Rating in Firestore for caching
     await docRef.set({
-      symbol: symbol.toUpperCase(),
+      symbol: symbolUpper,
       recommendation: parsedAiData,
       lastFetched: now,
       updatedAt: now
     });
-    console.log(`Stored AI Rating for symbol: ${symbol.toUpperCase()}`);
+    console.log(`Stored AI Rating for symbol: ${symbolUpper}`);
 
     // Return the AI Rating as JSON with CORS headers
     return {
