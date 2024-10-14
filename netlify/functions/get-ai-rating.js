@@ -25,13 +25,25 @@ const db = admin.firestore();
 exports.handler = async (event, context) => {
   const { symbol } = event.queryStringParameters;
 
+  // Get the origin from the request headers
+  const origin = event.headers.origin;
+  const allowedOrigins = ['https://amldash.webflow.io']; // Add any other allowed origins here
+
+  let corsHeader = '';
+
+  if (allowedOrigins.includes(origin)) {
+    corsHeader = origin;
+  } else {
+    corsHeader = 'https://amldash.webflow.io'; // Default to your main domain
+  }
+
   // Handle CORS preflight requests
   if (event.httpMethod === 'OPTIONS') {
     console.log('Handling CORS preflight request.');
     return {
       statusCode: 200,
       headers: {
-        'Access-Control-Allow-Origin': 'https://amldash.webflow.io', // Replace with your actual Webflow domain
+        'Access-Control-Allow-Origin': corsHeader,
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       },
@@ -45,7 +57,7 @@ exports.handler = async (event, context) => {
     return {
       statusCode: 400,
       headers: {
-        'Access-Control-Allow-Origin': 'https://yourwebflowsite.com', // Replace with your actual Webflow domain
+        'Access-Control-Allow-Origin': corsHeader,
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Content-Type': 'application/json',
       },
@@ -72,7 +84,7 @@ exports.handler = async (event, context) => {
         return {
           statusCode: 200,
           headers: {
-            'Access-Control-Allow-Origin': 'https://yourwebflowsite.com', // Replace with your actual Webflow domain
+            'Access-Control-Allow-Origin': corsHeader,
             'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Content-Type': 'application/json',
           },
@@ -236,7 +248,7 @@ exports.handler = async (event, context) => {
               'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
             },
             body: JSON.stringify({
-              model: 'gpt-4o-mini', // Updated model
+              model: 'gpt-4o-mini',
               messages: [{ role: 'user', content: prompt }],
               max_tokens: 1000,
               temperature: 0.7,
@@ -349,7 +361,7 @@ exports.handler = async (event, context) => {
     return {
       statusCode: 200,
       headers: {
-        'Access-Control-Allow-Origin': 'https://amldash.webflow.io', // Replace with your actual Webflow domain
+        'Access-Control-Allow-Origin': corsHeader,
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Content-Type': 'application/json',
       },
@@ -361,7 +373,7 @@ exports.handler = async (event, context) => {
     return {
       statusCode: 500,
       headers: {
-        'Access-Control-Allow-Origin': 'https://yourwebflowsite.com', // Replace with your actual Webflow domain
+        'Access-Control-Allow-Origin': corsHeader,
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Content-Type': 'application/json',
       },
