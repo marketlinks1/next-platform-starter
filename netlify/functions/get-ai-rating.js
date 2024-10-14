@@ -31,7 +31,7 @@ exports.handler = async (event, context) => {
     return {
       statusCode: 200,
       headers: {
-        'Access-Control-Allow-Origin': '*', // Replace '*' with your Webflow domain for enhanced security
+        'Access-Control-Allow-Origin': 'https://yourwebflowsite.com', // Replace with your actual Webflow domain
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       },
@@ -45,7 +45,7 @@ exports.handler = async (event, context) => {
     return {
       statusCode: 400,
       headers: {
-        'Access-Control-Allow-Origin': '*', // Replace '*' with your Webflow domain for enhanced security
+        'Access-Control-Allow-Origin': 'https://yourwebflowsite.com', // Replace with your actual Webflow domain
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Content-Type': 'application/json',
       },
@@ -72,7 +72,7 @@ exports.handler = async (event, context) => {
         return {
           statusCode: 200,
           headers: {
-            'Access-Control-Allow-Origin': '*', // Replace '*' with your Webflow domain for enhanced security
+            'Access-Control-Allow-Origin': 'https://yourwebflowsite.com', // Replace with your actual Webflow domain
             'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Content-Type': 'application/json',
           },
@@ -85,9 +85,9 @@ exports.handler = async (event, context) => {
       console.log(`No cached data found for symbol: ${symbol.toUpperCase()}. Fetching new data.`);
     }
 
-    // Fetch stock data from Financial Modeling Prep API
+    // Fetch comprehensive stock data from Financial Modeling Prep API using a single endpoint
     const fmpApiKey = process.env.FMP_API_KEY;
-    const stockApiUrl = `https://financialmodelingprep.com/api/v3/quote/${symbol.toUpperCase()}?apikey=${fmpApiKey}`;
+    const stockApiUrl = `https://financialmodelingprep.com/api/v4/company-outlook?symbol=${symbol.toUpperCase()}&apikey=${fmpApiKey}`;
     console.log(`Fetching stock data from URL: ${stockApiUrl}`);
 
     const stockDataResponse = await fetch(stockApiUrl);
@@ -102,21 +102,54 @@ exports.handler = async (event, context) => {
     const stockData = await stockDataResponse.json();
     console.log(`Stock data received: ${JSON.stringify(stockData)}`);
 
-    if (!Array.isArray(stockData) || stockData.length === 0) {
-      throw new Error('No stock data found for the given symbol.');
+    // Remove 'insideTrades' from the response
+    if (stockData.insideTrades) {
+      delete stockData.insideTrades;
+      console.log('Removed "insideTrades" from the API response.');
     }
 
-    // Define the prompt for OpenAI
+    // Check for ESG data (assuming it's under 'esg' or similar; adjust based on actual structure)
+    let esgData = stockData.esg || null; // Adjust the path based on actual ESG data location
+
+    // If ESG data is not available, add Technical Indicators
+    if (!esgData) {
+      console.log('ESG data not available. Adding Technical Indicators.');
+      // Add Technical Indicators
+      // Note: Without historical price data, we can only add placeholder indicators or use available metrics creatively.
+
+      // Example: Adding a placeholder for Moving Average
+      stockData.technicalIndicators = {
+        movingAverage50: null, // Placeholder as 50-day MA cannot be calculated without historical data
+        movingAverage200: null, // Placeholder as 200-day MA cannot be calculated without historical data
+        rsi: null, // Placeholder as RSI cannot be calculated without historical data
+        macd: null, // Placeholder as MACD cannot be calculated without historical data
+        // Alternatively, use available metrics to create basic indicators
+        volume: stockData.metrics ? stockData.metrics.volume : null,
+        // Add more indicators as needed based on available data
+      };
+
+      console.log('Added Technical Indicators placeholders to the API response.');
+    }
+
+    // Define the prompt for OpenAI using the consolidated data
     const prompt = `
       Analyze the following stock data and provide an investment recommendation.
 
       **Stock Information:**
-      - **Name:** ${stockData[0].name} (${stockData[0].symbol})
-      - **Current Price:** $${stockData[0].price}
-      - **Percentage Change:** ${stockData[0].changesPercentage}%
-      - **Volume:** ${stockData[0].volume}
-      - **Market Cap:** $${stockData[0].marketCap}
-      - **P/E Ratio:** ${stockData[0].pe}
+      - **Name:** ${stockData.profile.companyName} (${stockData.profile.symbol})
+      - **Current Price:** $${stockData.profile.price}
+      - **Percentage Change:** ${stockData.profile.changes}%
+      - **Volume:** ${stockData.metrics.volume}
+      - **Market Cap:** $${stockData.profile.mktCap}
+      - **P/E Ratio:** ${stockData.ratios[0].peRatioTTM}
+
+      ${stockData.technicalIndicators ? `
+      **Technical Indicators:**
+      - **50-Day Moving Average:** ${stockData.technicalIndicators.movingAverage50 || 'N/A'}
+      - **200-Day Moving Average:** ${stockData.technicalIndicators.movingAverage200 || 'N/A'}
+      - **RSI:** ${stockData.technicalIndicators.rsi || 'N/A'}
+      - **MACD:** ${stockData.technicalIndicators.macd || 'N/A'}
+      ` : ''}
 
       **Task:**
       Based on the above data, provide an investment recommendation. The response should be in JSON format as shown below:
@@ -138,13 +171,13 @@ exports.handler = async (event, context) => {
     `;
 
     /**
-     * Function to call OpenAI API with retry logic
+     * Function to call OpenAI API with controlled retry logic
      * @param {string} prompt - The prompt to send to OpenAI
      * @param {number} retries - Number of retry attempts
      * @param {number} delay - Initial delay in milliseconds
      * @returns {Response} - The fetch response from OpenAI
      */
-    const callOpenAI = async (prompt, retries = 5, delay = 2000) => { // Increased retries and delay
+    const callOpenAI = async (prompt, retries = 3, delay = 1000) => { // Limited to 3 retries
       for (let attempt = 1; attempt <= retries; attempt++) {
         try {
           console.log(`Attempt ${attempt}: Sending prompt to OpenAI`);
@@ -157,9 +190,9 @@ exports.handler = async (event, context) => {
               'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
             },
             body: JSON.stringify({
-              model: 'gpt-4o-mini-2024-07-18', // Updated model
+              model: 'gpt-4', // Adjust based on your OpenAI subscription
               messages: [{ role: 'user', content: prompt }],
-              max_tokens: 1000, // Increased from 200 to 1000
+              max_tokens: 1000, // Adjust based on expected response length
               temperature: 0.7,
             }),
           });
@@ -168,9 +201,13 @@ exports.handler = async (event, context) => {
 
           if (response.status === 429) { // Too Many Requests
             console.warn(`Rate limit hit on attempt ${attempt}. Retrying in ${delay}ms...`);
-            await new Promise(res => setTimeout(res, delay));
-            delay *= 2; // Exponential backoff
-            continue;
+            if (attempt < retries) {
+              await new Promise(res => setTimeout(res, delay));
+              delay *= 2; // Exponential backoff
+              continue;
+            } else {
+              throw new Error('Rate limit exceeded. Please try again later.');
+            }
           }
 
           if (!response.ok) {
@@ -193,7 +230,7 @@ exports.handler = async (event, context) => {
       }
     };
 
-    // Call OpenAI API with retry logic
+    // Call OpenAI API with controlled retry logic
     const aiResponse = await callOpenAI(prompt);
 
     if (!aiResponse) {
@@ -211,12 +248,14 @@ exports.handler = async (event, context) => {
       throw new Error('Failed to parse AI response as JSON.');
     }
 
-    const aiContent = aiData.choices[0]?.message?.content.trim();
+    const aiContent = aiData.choices && aiData.choices[0] && aiData.choices[0].message && aiData.choices[0].message.content
+      ? aiData.choices[0].message.content.trim()
+      : null;
     console.log(`AI Content: ${aiContent}`);
 
     if (!aiContent) {
-      console.error('AI response is empty.');
-      throw new Error('AI response is empty.');
+      console.error('AI response is empty or malformed.');
+      throw new Error('AI response is empty or malformed.');
     }
 
     // Extract JSON from AI response
@@ -225,8 +264,14 @@ exports.handler = async (event, context) => {
       console.error('No JSON object found in AI response.');
       throw new Error('No JSON object found in AI response.');
     }
-    const parsedAiData = JSON.parse(jsonMatch[0]);
-    console.log(`Parsed AI Data: ${JSON.stringify(parsedAiData)}`);
+    let parsedAiData;
+    try {
+      parsedAiData = JSON.parse(jsonMatch[0]);
+      console.log(`Parsed AI Data: ${JSON.stringify(parsedAiData)}`);
+    } catch (jsonParseError) {
+      console.error('Failed to parse JSON from AI response:', jsonParseError);
+      throw new Error('Failed to parse JSON from AI response.');
+    }
 
     // Validate AI response structure and content
     if (!["Buy", "Sell", "Hold"].includes(parsedAiData.rating)) {
@@ -259,7 +304,7 @@ exports.handler = async (event, context) => {
     return {
       statusCode: 200,
       headers: {
-        'Access-Control-Allow-Origin': '*', // Replace '*' with your Webflow domain for enhanced security
+        'Access-Control-Allow-Origin': 'https://yourwebflowsite.com', // Replace with your actual Webflow domain
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Content-Type': 'application/json',
       },
@@ -271,7 +316,7 @@ exports.handler = async (event, context) => {
     return {
       statusCode: 500,
       headers: {
-        'Access-Control-Allow-Origin': '*', // Replace '*' with your Webflow domain for enhanced security
+        'Access-Control-Allow-Origin': 'https://yourwebflowsite.com', // Replace with your actual Webflow domain
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Content-Type': 'application/json',
       },
