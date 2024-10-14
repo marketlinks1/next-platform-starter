@@ -27,6 +27,7 @@ exports.handler = async (event, context) => {
 
   // Handle CORS preflight requests
   if (event.httpMethod === 'OPTIONS') {
+    console.log('Handling CORS preflight request.');
     return {
       statusCode: 200,
       headers: {
@@ -40,17 +41,21 @@ exports.handler = async (event, context) => {
 
   // Validate the presence of the 'symbol' query parameter
   if (!symbol) {
+    console.warn('No symbol provided in the query parameters.');
     return {
       statusCode: 400,
       headers: {
         'Access-Control-Allow-Origin': '*', // Replace '*' with your Webflow domain for enhanced security
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({ error: 'Symbol is required' }),
     };
   }
 
   try {
+    console.log(`Processing request for symbol: ${symbol.toUpperCase()}`);
+
     // Reference to the Firestore document for caching
     const docRef = db.collection('aiRatings').doc(symbol.toUpperCase());
     const docSnap = await docRef.get();
@@ -73,19 +78,29 @@ exports.handler = async (event, context) => {
           },
           body: JSON.stringify(data.recommendation),
         };
+      } else {
+        console.log(`Cached data for symbol: ${symbol.toUpperCase()} is older than 24 hours. Fetching new data.`);
       }
+    } else {
+      console.log(`No cached data found for symbol: ${symbol.toUpperCase()}. Fetching new data.`);
     }
 
     // Fetch stock data from Financial Modeling Prep API
     const fmpApiKey = process.env.FMP_API_KEY;
-    const stockDataResponse = await fetch(`https://financialmodelingprep.com/api/v3/quote/${symbol.toUpperCase()}?apikey=${fmpApiKey}`);
-    
+    const stockApiUrl = `https://financialmodelingprep.com/api/v3/quote/${symbol.toUpperCase()}?apikey=${fmpApiKey}`;
+    console.log(`Fetching stock data from URL: ${stockApiUrl}`);
+
+    const stockDataResponse = await fetch(stockApiUrl);
+    console.log(`Financial Modeling Prep API response status: ${stockDataResponse.status}`);
+
     if (!stockDataResponse.ok) {
       const errorText = await stockDataResponse.text();
-      throw new Error(`Financial Modeling Prep API error: ${stockDataResponse.status} ${stockDataResponse.statusText} - ${errorText}`);
+      console.error(`Financial Modeling Prep API error: ${stockDataResponse.status} ${stockDataResponse.statusText} - ${errorText}`);
+      throw new Error(`Financial Modeling Prep API error: ${stockDataResponse.status} ${stockDataResponse.statusText}`);
     }
 
     const stockData = await stockDataResponse.json();
+    console.log(`Stock data received: ${JSON.stringify(stockData)}`);
 
     if (!Array.isArray(stockData) || stockData.length === 0) {
       throw new Error('No stock data found for the given symbol.');
@@ -129,11 +144,11 @@ exports.handler = async (event, context) => {
      * @param {number} delay - Initial delay in milliseconds
      * @returns {Response} - The fetch response from OpenAI
      */
-    const callOpenAI = async (prompt, retries = 3, delay = 1000) => {
+    const callOpenAI = async (prompt, retries = 5, delay = 2000) => { // Increased retries and delay
       for (let attempt = 1; attempt <= retries; attempt++) {
         try {
           console.log(`Attempt ${attempt}: Sending prompt to OpenAI`);
-          console.log(`Prompt: ${prompt}`); // Logging the prompt sent to OpenAI
+          console.log(`Prompt: ${prompt}`);
 
           const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
@@ -160,7 +175,8 @@ exports.handler = async (event, context) => {
 
           if (!response.ok) {
             const errorData = await response.text(); // Use text() to capture error details
-            throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorData}`);
+            console.error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorData}`);
+            throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
           }
 
           return response;
@@ -170,6 +186,7 @@ exports.handler = async (event, context) => {
             throw new Error('Exceeded maximum retries due to rate limits or other errors.');
           }
           // Wait before next retry
+          console.log(`Waiting for ${delay}ms before next retry...`);
           await new Promise(res => setTimeout(res, delay));
           delay *= 2; // Exponential backoff
         }
@@ -178,29 +195,54 @@ exports.handler = async (event, context) => {
 
     // Call OpenAI API with retry logic
     const aiResponse = await callOpenAI(prompt);
-    const aiData = await aiResponse.json();
-    const aiContent = aiData.choices[0]?.message?.content.trim();
 
-    console.log(`AI Response Content: ${aiContent}`); // Logging the AI response
+    if (!aiResponse) {
+      console.error('OpenAI API did not return a response.');
+      throw new Error('OpenAI API did not return a response.');
+    }
+
+    // Attempt to parse the AI response
+    let aiData;
+    try {
+      aiData = await aiResponse.json();
+      console.log(`AI Response Data: ${JSON.stringify(aiData)}`);
+    } catch (parseError) {
+      console.error('Failed to parse AI response as JSON:', parseError);
+      throw new Error('Failed to parse AI response as JSON.');
+    }
+
+    const aiContent = aiData.choices[0]?.message?.content.trim();
+    console.log(`AI Content: ${aiContent}`);
+
+    if (!aiContent) {
+      console.error('AI response is empty.');
+      throw new Error('AI response is empty.');
+    }
 
     // Extract JSON from AI response
     const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
+      console.error('No JSON object found in AI response.');
       throw new Error('No JSON object found in AI response.');
     }
     const parsedAiData = JSON.parse(jsonMatch[0]);
+    console.log(`Parsed AI Data: ${JSON.stringify(parsedAiData)}`);
 
     // Validate AI response structure and content
     if (!["Buy", "Sell", "Hold"].includes(parsedAiData.rating)) {
+      console.error('Invalid rating value received from AI.');
       throw new Error('Invalid rating value received from AI.');
     }
     if (isNaN(parseFloat(parsedAiData.target_price))) {
+      console.error('Invalid target price value received from AI.');
       throw new Error('Invalid target price value received from AI.');
     }
     if (typeof parsedAiData.reason !== 'string') {
+      console.error('Invalid reason format received from AI.');
       throw new Error('Invalid reason format received from AI.');
     }
     if (typeof parsedAiData.criteria_count !== 'number') {
+      console.error('Invalid criteria count received from AI.');
       throw new Error('Invalid criteria count received from AI.');
     }
 
@@ -211,7 +253,6 @@ exports.handler = async (event, context) => {
       lastFetched: now,
       updatedAt: now
     });
-
     console.log(`Stored AI Rating for symbol: ${symbol.toUpperCase()}`);
 
     // Return the AI Rating as JSON with CORS headers
