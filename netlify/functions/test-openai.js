@@ -28,7 +28,7 @@ exports.handler = async (event, context) => {
       body: JSON.stringify({
         model: 'gpt-3.5-turbo', // Use a more commonly accessible model for testing
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 50,
+        max_tokens: 200,
         temperature: 0.7,
       }),
     });
