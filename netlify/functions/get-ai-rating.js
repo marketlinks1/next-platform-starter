@@ -111,8 +111,9 @@ exports.handler = async (event, context) => {
       console.log('Removed "insideTrades" from the Company Outlook data.');
     }
 
-    // Fetch ESG data
-    const esgApiUrl = `https://financialmodelingprep.com/api/v4/esg-environmental-social-governance-data?symbol=${symbolUpper}&apikey=${fmpApiKey}`;
+    // Fetch ESG data for the current year
+    const currentYear = new Date().getFullYear();
+    const esgApiUrl = `https://financialmodelingprep.com/api/v4/esg-environmental-social-governance-data?symbol=${symbolUpper}&year=${currentYear}&apikey=${fmpApiKey}`;
     console.log(`Fetching ESG data from URL: ${esgApiUrl}`);
 
     const esgResponse = await fetch(esgApiUrl);
@@ -132,12 +133,25 @@ exports.handler = async (event, context) => {
       const latestEsgData = esgDataArray[0];
       companyOutlookData.esgData = latestEsgData;
     } else {
-      console.log('No ESG data available.');
+      console.log('No ESG data available for the current year.');
     }
 
-    // Fetch Technical Indicators data
-    // For example, fetching RSI (Relative Strength Index) as technical indicator
-    const technicalIndicatorsUrl = `https://financialmodelingprep.com/api/v3/technical_indicator/daily/${symbolUpper}?period=14&type=rsi&apikey=${fmpApiKey}`;
+    // Fetch Technical Indicators data for the past 30 days
+    const today = new Date();
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(today.getDate() - 30);
+
+    const formatDate = (date) => {
+      const year = date.getFullYear();
+      const month = ('0' + (date.getMonth() + 1)).slice(-2);
+      const day = ('0' + date.getDate()).slice(-2);
+      return `${year}-${month}-${day}`;
+    };
+
+    const fromDate = formatDate(thirtyDaysAgo);
+    const toDate = formatDate(today);
+
+    const technicalIndicatorsUrl = `https://financialmodelingprep.com/api/v3/technical_indicator/daily/${symbolUpper}?period=14&type=rsi&from=${fromDate}&to=${toDate}&apikey=${fmpApiKey}`;
     console.log(`Fetching Technical Indicators data from URL: ${technicalIndicatorsUrl}`);
 
     const technicalIndicatorsResponse = await fetch(technicalIndicatorsUrl);
@@ -154,11 +168,9 @@ exports.handler = async (event, context) => {
 
     // Include Technical Indicators data into the companyOutlookData
     if (technicalIndicatorsData && technicalIndicatorsData.length > 0) {
-      // Assuming the data is sorted by date in descending order, take the latest data point
-      const latestTechnicalIndicator = technicalIndicatorsData[0];
-      companyOutlookData.technicalIndicators = latestTechnicalIndicator;
+      companyOutlookData.technicalIndicators = technicalIndicatorsData;
     } else {
-      console.log('No Technical Indicators data available.');
+      console.log('No Technical Indicators data available for the past 30 days.');
     }
 
     // Prepare the data to feed into the AI
@@ -179,13 +191,13 @@ exports.handler = async (event, context) => {
     const promptData = JSON.stringify(companyOutlookData, null, 2);
 
     const prompt = `
-      Analyze the following stock data and provide an investment recommendation.
+      Analyze the following stock data with emphasis on the most recent information and provide an investment recommendation.
 
-      **Stock Data:**
+      **Stock Data (focus on the latest ESG data for this year and Technical Indicators for the past 30 days):**
       ${promptData}
 
       **Task:**
-      Based on the above data, provide an investment recommendation. The response should be in JSON format as shown below:
+      Based on the above data, especially the recent data, provide an investment recommendation. The response should be in JSON format as shown below:
 
       \`\`\`json
       {
@@ -201,6 +213,7 @@ exports.handler = async (event, context) => {
       - The "rating" should be one of "Buy", "Sell", or "Hold".
       - "target_price" should be a numerical value representing the target price in USD.
       - "reason" should be concise, no longer than two sentences.
+      - Focus on the most recent data in your analysis.
     `;
 
     /**
