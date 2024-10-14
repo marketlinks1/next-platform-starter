@@ -1,4 +1,3 @@
-// netlify/functions/get-ai-rating.js
 const fetch = require('node-fetch');
 const admin = require('firebase-admin');
 
@@ -16,8 +15,8 @@ if (!admin.apps.length) {
       token_uri: process.env.FIREBASE_TOKEN_URI,
       auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_X509_CERT_URL,
       client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL
-    })
-    // No databaseURL since Realtime Database is not used
+    }),
+    // Add other Firebase configurations if necessary
   });
 }
 
@@ -26,34 +25,57 @@ const db = admin.firestore();
 exports.handler = async (event, context) => {
   const { symbol } = event.queryStringParameters;
 
+  // Handle CORS preflight requests
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*', // Replace '*' with your Webflow domain for enhanced security
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      },
+      body: '',
+    };
+  }
+
+  // Validate the presence of the 'symbol' query parameter
   if (!symbol) {
     return {
       statusCode: 400,
+      headers: {
+        'Access-Control-Allow-Origin': '*', // Replace '*' with your Webflow domain for enhanced security
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      },
       body: JSON.stringify({ error: 'Symbol is required' }),
     };
   }
 
   try {
-    // Check Firestore for cached AI Rating
+    // Reference to the Firestore document for caching
     const docRef = db.collection('aiRatings').doc(symbol);
     const docSnap = await docRef.get();
     const now = admin.firestore.Timestamp.now();
 
+    // Check if cached data exists and is less than 24 hours old
     if (docSnap.exists) {
       const data = docSnap.data();
       const lastFetched = data.lastFetched;
       const hoursElapsed = (now.toDate() - lastFetched.toDate()) / (1000 * 60 * 60);
 
       if (hoursElapsed < 24) {
-        // Return cached data
+        // Return cached AI Rating
         return {
           statusCode: 200,
+          headers: {
+            'Access-Control-Allow-Origin': '*', // Replace '*' with your Webflow domain for enhanced security
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          },
           body: JSON.stringify(data.recommendation),
         };
       }
     }
 
-    // Fetch stock data from FMP
+    // Fetch stock data from Financial Modeling Prep API
     const fmpApiKey = process.env.FMP_API_KEY;
     const stockDataResponse = await fetch(`https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${fmpApiKey}`);
     const stockData = await stockDataResponse.json();
@@ -62,8 +84,7 @@ exports.handler = async (event, context) => {
       throw new Error('No stock data found for the given symbol.');
     }
 
-    // Generate AI Rating using OpenAI
-    const openAiApiKey = process.env.OPENAI_API_KEY;
+    // Define the prompt for OpenAI
     const prompt = `
       Analyze the following stock data and provide an investment recommendation.
 
@@ -94,47 +115,82 @@ exports.handler = async (event, context) => {
       - "reason" should be concise, no longer than two sentences.
     `;
 
-    const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${openAiApiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 200,
-        temperature: 0.7,
-      }),
-    });
+    /**
+     * Function to call OpenAI API with retry logic
+     * @param {string} prompt - The prompt to send to OpenAI
+     * @param {number} retries - Number of retry attempts
+     * @param {number} delay - Initial delay in milliseconds
+     * @returns {Response} - The fetch response from OpenAI
+     */
+    const callOpenAI = async (prompt, retries = 3, delay = 1000) => {
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+            },
+            body: JSON.stringify({
+              model: 'gpt-4o-mini-2024-07-18', // Updated model
+              messages: [{ role: 'user', content: prompt }],
+              max_tokens: 1000, // Increased max tokens
+              temperature: 0.7,
+            }),
+          });
 
-    if (!aiResponse.ok) {
-      throw new Error(`OpenAI API error: ${aiResponse.statusText}`);
-    }
+          if (response.status === 429) { // Too Many Requests
+            console.warn(`Rate limit hit on attempt ${attempt}. Retrying in ${delay}ms...`);
+            await new Promise(res => setTimeout(res, delay));
+            delay *= 2; // Exponential backoff
+            continue;
+          }
 
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`OpenAI API error: ${errorData.error.message || response.statusText}`);
+          }
+
+          return response;
+        } catch (error) {
+          console.error(`Attempt ${attempt} failed: ${error.message}`);
+          if (attempt === retries) {
+            throw new Error('Exceeded maximum retries due to rate limits or other errors.');
+          }
+          // Wait before next retry
+          await new Promise(res => setTimeout(res, delay));
+          delay *= 2; // Exponential backoff
+        }
+      }
+    };
+
+    // Call OpenAI API with retry logic
+    const aiResponse = await callOpenAI(prompt);
     const aiData = await aiResponse.json();
     const aiContent = aiData.choices[0]?.message?.content.trim();
 
-    // Parse AI response
+    // Extract JSON from AI response
     const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON object found in AI response');
+    if (!jsonMatch) {
+      throw new Error('No JSON object found in AI response.');
+    }
     const parsedAiData = JSON.parse(jsonMatch[0]);
 
-    // Validate AI response
+    // Validate AI response structure and content
     if (!["Buy", "Sell", "Hold"].includes(parsedAiData.rating)) {
-      throw new Error('Invalid rating value');
+      throw new Error('Invalid rating value received from AI.');
     }
     if (isNaN(parseFloat(parsedAiData.target_price))) {
-      throw new Error('Invalid target price');
+      throw new Error('Invalid target price value received from AI.');
     }
     if (typeof parsedAiData.reason !== 'string') {
-      throw new Error('Invalid reason format');
+      throw new Error('Invalid reason format received from AI.');
     }
     if (typeof parsedAiData.criteria_count !== 'number') {
-      throw new Error('Invalid criteria count');
+      throw new Error('Invalid criteria count received from AI.');
     }
 
-    // Store AI Rating in Firestore
+    // Store the AI Rating in Firestore for caching
     await docRef.set({
       symbol: symbol,
       recommendation: parsedAiData,
@@ -142,8 +198,14 @@ exports.handler = async (event, context) => {
       updatedAt: now
     });
 
+    // Return the AI Rating as JSON with CORS headers
     return {
       statusCode: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*', // Replace '*' with your Webflow domain for enhanced security
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify(parsedAiData),
     };
 
@@ -151,6 +213,11 @@ exports.handler = async (event, context) => {
     console.error('Error in get-ai-rating function:', error);
     return {
       statusCode: 500,
+      headers: {
+        'Access-Control-Allow-Origin': '*', // Replace '*' with your Webflow domain for enhanced security
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({ error: error.message }),
     };
   }
