@@ -108,27 +108,53 @@ exports.handler = async (event, context) => {
       console.log('Removed "insideTrades" from the API response.');
     }
 
-    // Check for ESG data (assuming it's under 'esg' or similar; adjust based on actual structure)
-    let esgData = stockData.esg || null; // Adjust the path based on actual ESG data location
+    // Fetch ESG data
+    const esgApiUrl = `https://financialmodelingprep.com/api/v4/esg-environmental-social-governance-data?symbol=${symbol.toUpperCase()}&apikey=${fmpApiKey}`;
+    console.log(`Fetching ESG data from URL: ${esgApiUrl}`);
 
-    // If ESG data is not available, add Technical Indicators
-    if (!esgData) {
-      console.log('ESG data not available. Adding Technical Indicators.');
-      // Add Technical Indicators
-      // Note: Without historical price data, we can only add placeholder indicators or use available metrics creatively.
+    const esgDataResponse = await fetch(esgApiUrl);
+    console.log(`ESG data response status: ${esgDataResponse.status}`);
 
-      // Example: Adding a placeholder for Moving Average
-      stockData.technicalIndicators = {
-        movingAverage50: null, // Placeholder as 50-day MA cannot be calculated without historical data
-        movingAverage200: null, // Placeholder as 200-day MA cannot be calculated without historical data
-        rsi: null, // Placeholder as RSI cannot be calculated without historical data
-        macd: null, // Placeholder as MACD cannot be calculated without historical data
-        // Alternatively, use available metrics to create basic indicators
-        volume: stockData.metrics ? stockData.metrics.volume : null,
-        // Add more indicators as needed based on available data
-      };
+    if (!esgDataResponse.ok) {
+      const errorText = await esgDataResponse.text();
+      console.error(`ESG data API error: ${esgDataResponse.status} ${esgDataResponse.statusText} - ${errorText}`);
+      throw new Error(`ESG data API error: ${esgDataResponse.status} ${esgDataResponse.statusText}`);
+    }
 
-      console.log('Added Technical Indicators placeholders to the API response.');
+    const esgDataArray = await esgDataResponse.json();
+    console.log(`ESG data received: ${JSON.stringify(esgDataArray)}`);
+
+    // Include ESG data into stockData
+    if (esgDataArray && esgDataArray.length > 0) {
+      const latestEsgData = esgDataArray[0];
+      stockData.esgData = latestEsgData;
+    } else {
+      console.log('No ESG data available.');
+    }
+
+    // Fetch Technical Indicators data
+    const technicalIndicatorsApiUrl = `https://financialmodelingprep.com/api/v3/technical_indicator/monthly/${symbol.toUpperCase()}?type=stock&indicator=rsi,sma,ema,macd&apikey=${fmpApiKey}`;
+    console.log(`Fetching Technical Indicators data from URL: ${technicalIndicatorsApiUrl}`);
+
+    const technicalIndicatorsResponse = await fetch(technicalIndicatorsApiUrl);
+    console.log(`Technical Indicators response status: ${technicalIndicatorsResponse.status}`);
+
+    if (!technicalIndicatorsResponse.ok) {
+      const errorText = await technicalIndicatorsResponse.text();
+      console.error(`Technical Indicators API error: ${technicalIndicatorsResponse.status} ${technicalIndicatorsResponse.statusText} - ${errorText}`);
+      throw new Error(`Technical Indicators API error: ${technicalIndicatorsResponse.status} ${technicalIndicatorsResponse.statusText}`);
+    }
+
+    const technicalIndicatorsData = await technicalIndicatorsResponse.json();
+    console.log(`Technical Indicators data received: ${JSON.stringify(technicalIndicatorsData)}`);
+
+    // Include Technical Indicators data into stockData
+    if (technicalIndicatorsData && technicalIndicatorsData.length > 0) {
+      // Assuming the data is an array sorted by date, take the latest data point
+      const latestTechnicalIndicators = technicalIndicatorsData[technicalIndicatorsData.length - 1];
+      stockData.technicalIndicators = latestTechnicalIndicators;
+    } else {
+      console.log('No Technical Indicators data available.');
     }
 
     // Define the prompt for OpenAI using the consolidated data
@@ -138,17 +164,25 @@ exports.handler = async (event, context) => {
       **Stock Information:**
       - **Name:** ${stockData.profile.companyName} (${stockData.profile.symbol})
       - **Current Price:** $${stockData.profile.price}
-      - **Percentage Change:** ${stockData.profile.changes}%
-      - **Volume:** ${stockData.metrics.volume}
-      - **Market Cap:** $${stockData.profile.mktCap}
-      - **P/E Ratio:** ${stockData.ratios[0].peRatioTTM}
+      - **Percentage Change:** ${stockData.profile.changesPercentage || 'N/A'}%
+      - **Volume:** ${stockData.profile.volAvg || 'N/A'}
+      - **Market Cap:** $${stockData.profile.mktCap || 'N/A'}
+      - **P/E Ratio:** ${stockData.ratios && stockData.ratios[0] ? stockData.ratios[0].priceEarningsRatioTTM : 'N/A'}
 
       ${stockData.technicalIndicators ? `
       **Technical Indicators:**
-      - **50-Day Moving Average:** ${stockData.technicalIndicators.movingAverage50 || 'N/A'}
-      - **200-Day Moving Average:** ${stockData.technicalIndicators.movingAverage200 || 'N/A'}
+      - **50-Day Moving Average (SMA50):** ${stockData.technicalIndicators.sma50 || 'N/A'}
+      - **200-Day Moving Average (SMA200):** ${stockData.technicalIndicators.sma200 || 'N/A'}
       - **RSI:** ${stockData.technicalIndicators.rsi || 'N/A'}
       - **MACD:** ${stockData.technicalIndicators.macd || 'N/A'}
+      ` : ''}
+
+      ${stockData.esgData ? `
+      **ESG Data:**
+      - **Environment Score:** ${stockData.esgData.environmentScore || 'N/A'}
+      - **Social Score:** ${stockData.esgData.socialScore || 'N/A'}
+      - **Governance Score:** ${stockData.esgData.governanceScore || 'N/A'}
+      - **Total ESG Score:** ${stockData.esgData.totalEsg || 'N/A'}
       ` : ''}
 
       **Task:**
@@ -177,7 +211,7 @@ exports.handler = async (event, context) => {
      * @param {number} delay - Initial delay in milliseconds
      * @returns {Response} - The fetch response from OpenAI
      */
-    const callOpenAI = async (prompt, retries = 3, delay = 1000) => { // Limited to 3 retries
+    const callOpenAI = async (prompt, retries = 3, delay = 1000) => {
       for (let attempt = 1; attempt <= retries; attempt++) {
         try {
           console.log(`Attempt ${attempt}: Sending prompt to OpenAI`);
@@ -190,20 +224,20 @@ exports.handler = async (event, context) => {
               'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
             },
             body: JSON.stringify({
-              model: 'gpt-4', // Adjust based on your OpenAI subscription
+              model: 'gpt-4',
               messages: [{ role: 'user', content: prompt }],
-              max_tokens: 1000, // Adjust based on expected response length
+              max_tokens: 1000,
               temperature: 0.7,
             }),
           });
 
           console.log(`OpenAI Response Status: ${response.status}`);
 
-          if (response.status === 429) { // Too Many Requests
+          if (response.status === 429) {
             console.warn(`Rate limit hit on attempt ${attempt}. Retrying in ${delay}ms...`);
             if (attempt < retries) {
               await new Promise(res => setTimeout(res, delay));
-              delay *= 2; // Exponential backoff
+              delay *= 2;
               continue;
             } else {
               throw new Error('Rate limit exceeded. Please try again later.');
@@ -211,7 +245,7 @@ exports.handler = async (event, context) => {
           }
 
           if (!response.ok) {
-            const errorData = await response.text(); // Use text() to capture error details
+            const errorData = await response.text();
             console.error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorData}`);
             throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
           }
@@ -222,10 +256,9 @@ exports.handler = async (event, context) => {
           if (attempt === retries) {
             throw new Error('Exceeded maximum retries due to rate limits or other errors.');
           }
-          // Wait before next retry
           console.log(`Waiting for ${delay}ms before next retry...`);
           await new Promise(res => setTimeout(res, delay));
-          delay *= 2; // Exponential backoff
+          delay *= 2;
         }
       }
     };
