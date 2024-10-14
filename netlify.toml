@@ -1,8 +1,10 @@
 [build]
-  publish = ".next"
   command = "npm run build"
+  publish = ".next"
+  functions = "netlify/functions"
   edge_functions = "netlify/edge-functions"
 
+# Edge Functions
 [[edge_functions]]
   path = "/.netlify/edge-functions/get-api-key"
   function = "get-api-key"
