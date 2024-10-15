@@ -49,9 +49,7 @@ exports.handler = async (event, context) => {
           {
             "$or": [
               { "keyword": keyword, "keywordLoc": "title" },
-              { "keyword": keyword.toLowerCase(), "keywordLoc": "title" },
-              { "keyword": "amzn", "keywordLoc": "body" },
-              { "keyword": "amzn", "keywordLoc": "title" }
+              { "keyword": keyword.toLowerCase(), "keywordLoc": "title" }
             ]
           },
           {
