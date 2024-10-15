@@ -5,6 +5,7 @@ const admin = require('firebase-admin');
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert({
+      // Your Firebase credentials
       type: process.env.FIREBASE_TYPE,
       project_id: process.env.FIREBASE_PROJECT_ID,
       private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
@@ -88,7 +89,10 @@ exports.handler = async (event, context) => {
             'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(data.recommendation),
+          body: JSON.stringify({
+            ...data.recommendation,
+            current_price: data.current_price,
+          }),
         };
       } else {
         console.log(`Cached data for symbol: ${symbol.toUpperCase()} is older than 24 hours. Fetching new data.`);
@@ -97,7 +101,7 @@ exports.handler = async (event, context) => {
       console.log(`No cached data found for symbol: ${symbol.toUpperCase()}. Fetching new data.`);
     }
 
-    // Fetch comprehensive stock data from Financial Modeling Prep API using the Company Outlook endpoint
+    // Fetch comprehensive stock data from Financial Modeling Prep API
     const fmpApiKey = process.env.FMP_API_KEY;
     const symbolUpper = symbol.toUpperCase();
 
@@ -185,11 +189,30 @@ exports.handler = async (event, context) => {
       console.log('No Technical Indicators data available for the past 30 days.');
     }
 
-    // Prepare the data to feed into the AI
-    // Remove any unnecessary data to keep the prompt within the token limit
-    // For example, remove 'stockNews' and 'splitsHistory' if not needed
+    // Fetch Current Price
+    const quoteUrl = `https://financialmodelingprep.com/api/v3/quote/${symbolUpper}?apikey=${fmpApiKey}`;
+    console.log(`Fetching current price from URL: ${quoteUrl}`);
 
-    // Remove 'stockNews' and 'splitsHistory' to reduce the data size
+    const quoteResponse = await fetch(quoteUrl);
+    console.log(`Quote API response status: ${quoteResponse.status}`);
+
+    if (!quoteResponse.ok) {
+      const errorText = await quoteResponse.text();
+      console.error(`Quote API error: ${quoteResponse.status} ${quoteResponse.statusText} - ${errorText}`);
+      throw new Error(`Quote API error: ${quoteResponse.status} ${quoteResponse.statusText}`);
+    }
+
+    const quoteData = await quoteResponse.json();
+    console.log(`Quote data received: ${JSON.stringify(quoteData)}`);
+
+    if (quoteData && quoteData.length > 0) {
+      companyOutlookData.currentPrice = quoteData[0].price;
+    } else {
+      console.log('No current price data available.');
+      companyOutlookData.currentPrice = null;
+    }
+
+    // Remove unnecessary data to reduce the size
     if (companyOutlookData.stockNews) {
       delete companyOutlookData.stockNews;
       console.log('Removed "stockNews" from the Company Outlook data.');
@@ -205,7 +228,7 @@ exports.handler = async (event, context) => {
     const prompt = `
       Analyze the following stock data with emphasis on the most recent information and provide an investment recommendation.
 
-      **Stock Data (focus on the latest ESG data for this year and Technical Indicators for the past 30 days):**
+      **Stock Data (focus on the latest ESG data for this year, Technical Indicators for the past 30 days, and current price):**
       ${promptData}
 
       **Task:**
@@ -228,18 +251,11 @@ exports.handler = async (event, context) => {
       - Focus on the most recent data in your analysis.
     `;
 
-    /**
-     * Function to call OpenAI API with controlled retry logic
-     * @param {string} prompt - The prompt to send to OpenAI
-     * @param {number} retries - Number of retry attempts
-     * @param {number} delay - Initial delay in milliseconds
-     * @returns {Response} - The fetch response from OpenAI
-     */
+    // Function to call OpenAI API with controlled retry logic
     const callOpenAI = async (prompt, retries = 3, delay = 1000) => {
       for (let attempt = 1; attempt <= retries; attempt++) {
         try {
           console.log(`Attempt ${attempt}: Sending prompt to OpenAI`);
-          // console.log(`Prompt: ${prompt}`);
 
           const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
@@ -348,16 +364,17 @@ exports.handler = async (event, context) => {
       throw new Error('Invalid criteria count received from AI.');
     }
 
-    // Store the AI Rating in Firestore for caching
+    // Store the AI Rating along with current price in Firestore for caching
     await docRef.set({
       symbol: symbolUpper,
       recommendation: parsedAiData,
+      current_price: companyOutlookData.currentPrice,
       lastFetched: now,
       updatedAt: now
     });
     console.log(`Stored AI Rating for symbol: ${symbolUpper}`);
 
-    // Return the AI Rating as JSON with CORS headers
+    // Return the AI Rating and current price as JSON with CORS headers
     return {
       statusCode: 200,
       headers: {
@@ -365,7 +382,10 @@ exports.handler = async (event, context) => {
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(parsedAiData),
+      body: JSON.stringify({
+        ...parsedAiData,
+        current_price: companyOutlookData.currentPrice,
+      }),
     };
 
   } catch (error) {
