@@ -3,11 +3,39 @@
 const fetch = require('node-fetch');
 
 exports.handler = async (event, context) => {
+  // Handle preflight OPTIONS request
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 200,
+      headers: {
+        'Access-Control-Allow-Origin': 'https://amldash.webflow.io', // Replace with your actual Webflow site domain
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      },
+      body: '',
+    };
+  }
+
+  // Only allow GET requests
+  if (event.httpMethod !== 'GET') {
+    return {
+      statusCode: 405,
+      headers: {
+        'Access-Control-Allow-Origin': 'https://amldash.webflow.io', // Replace with your actual Webflow site domain
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      },
+      body: JSON.stringify({ error: 'Method Not Allowed' }),
+    };
+  }
+
   const { symbol } = event.queryStringParameters;
 
   if (!symbol) {
     return {
       statusCode: 400,
+      headers: {
+        'Access-Control-Allow-Origin': 'https://amldash.webflow.io', // Replace with your actual Webflow site domain
+      },
       body: JSON.stringify({ error: 'Symbol query parameter is required.' }),
     };
   }
@@ -46,7 +74,7 @@ exports.handler = async (event, context) => {
     "resultType": "articles",
     "articlesSortBy": "date",
     "includeArticleSocialScore": true,
-    "apiKey": process.env.NEWSAPI_KEY // Store your API key in environment variables
+    "apiKey": process.env.NEWSAPI_KEY // Ensure this environment variable is set in Netlify
   };
 
   const url = 'https://newsapi.ai/api/v1/article/getArticles';
@@ -62,6 +90,9 @@ exports.handler = async (event, context) => {
       const errorData = await response.json();
       return {
         statusCode: response.status,
+        headers: {
+          'Access-Control-Allow-Origin': 'https://amldash.webflow.io', // Replace with your actual Webflow site domain
+        },
         body: JSON.stringify({ error: errorData.message || 'Failed to fetch news data.' }),
       };
     }
@@ -70,12 +101,19 @@ exports.handler = async (event, context) => {
 
     return {
       statusCode: 200,
+      headers: {
+        'Access-Control-Allow-Origin': 'https://amldash.webflow.io', // Replace with your actual Webflow site domain
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify(result),
     };
   } catch (error) {
     console.error('Error fetching news:', error);
     return {
       statusCode: 500,
+      headers: {
+        'Access-Control-Allow-Origin': 'https://amldash.webflow.io', // Replace with your actual Webflow site domain
+      },
       body: JSON.stringify({ error: 'Internal Server Error.' }),
     };
   }
