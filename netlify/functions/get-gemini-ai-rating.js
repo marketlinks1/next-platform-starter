@@ -1,5 +1,6 @@
 const fetch = require('node-fetch');
 const admin = require('firebase-admin');
+const { GoogleAuth } = require('google-auth-library');
 
 // Initialize Firebase Admin SDK
 if (!admin.apps.length) {
@@ -24,7 +25,7 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 exports.handler = async (event, context) => {
-  const { symbol } = event.queryStringParameters;
+  const { symbol } = event.queryStringParameters || {};
 
   // Get the origin from the request headers
   const origin = event.headers.origin;
@@ -67,10 +68,11 @@ exports.handler = async (event, context) => {
   }
 
   try {
-    console.log(`Processing request for symbol: ${symbol.toUpperCase()}`);
+    const symbolUpper = symbol.toUpperCase();
+    console.log(`Processing request for symbol: ${symbolUpper}`);
 
     // Reference to the new Firestore collection for caching
-    const docRef = db.collection('geminiAiRatings').doc(symbol.toUpperCase());
+    const docRef = db.collection('geminiAiRatings').doc(symbolUpper);
     const docSnap = await docRef.get();
     const now = admin.firestore.Timestamp.now();
 
@@ -81,7 +83,7 @@ exports.handler = async (event, context) => {
       const hoursElapsed = (now.toDate() - lastFetched.toDate()) / (1000 * 60 * 60);
 
       if (hoursElapsed < 24) {
-        console.log(`Returning cached data for symbol: ${symbol.toUpperCase()}`);
+        console.log(`Returning cached data for symbol: ${symbolUpper}`);
         return {
           statusCode: 200,
           headers: {
@@ -95,36 +97,36 @@ exports.handler = async (event, context) => {
           }),
         };
       } else {
-        console.log(`Cached data for symbol: ${symbol.toUpperCase()} is older than 24 hours. Fetching new data.`);
+        console.log(`Cached data for symbol: ${symbolUpper} is older than 24 hours. Fetching new data.`);
       }
     } else {
-      console.log(`No cached data found for symbol: ${symbol.toUpperCase()}. Fetching new data.`);
+      console.log(`No cached data found for symbol: ${symbolUpper}. Fetching new data.`);
     }
 
-    // Fetch comprehensive stock data from Financial Modeling Prep API
+    // Fetch essential stock data from Financial Modeling Prep API
     const fmpApiKey = process.env.FMP_API_KEY;
-    const symbolUpper = symbol.toUpperCase();
 
-    // Fetch Company Outlook data
-    const companyOutlookUrl = `https://financialmodelingprep.com/api/v4/company-outlook?symbol=${symbolUpper}&apikey=${fmpApiKey}`;
-    console.log(`Fetching Company Outlook data from URL: ${companyOutlookUrl}`);
+    // Fetch Current Price
+    const quoteUrl = `https://financialmodelingprep.com/api/v3/quote/${symbolUpper}?apikey=${fmpApiKey}`;
+    console.log(`Fetching current price from URL: ${quoteUrl}`);
 
-    const companyOutlookResponse = await fetch(companyOutlookUrl);
-    console.log(`Company Outlook API response status: ${companyOutlookResponse.status}`);
+    const quoteResponse = await fetch(quoteUrl);
+    console.log(`Quote API response status: ${quoteResponse.status}`);
 
-    if (!companyOutlookResponse.ok) {
-      const errorText = await companyOutlookResponse.text();
-      console.error(`Company Outlook API error: ${companyOutlookResponse.status} ${companyOutlookResponse.statusText} - ${errorText}`);
-      throw new Error(`Company Outlook API error: ${companyOutlookResponse.status} ${companyOutlookResponse.statusText}`);
+    if (!quoteResponse.ok) {
+      const errorText = await quoteResponse.text();
+      console.error(`Quote API error: ${quoteResponse.status} ${quoteResponse.statusText} - ${errorText}`);
+      throw new Error(`Quote API error: ${quoteResponse.status} ${quoteResponse.statusText}`);
     }
 
-    const companyOutlookData = await companyOutlookResponse.json();
-    console.log(`Company Outlook data received: ${JSON.stringify(companyOutlookData)}`);
+    const quoteData = await quoteResponse.json();
+    console.log(`Quote data received: ${JSON.stringify(quoteData)}`);
 
-    // Remove 'insideTrades' from the response if present
-    if (companyOutlookData.insideTrades) {
-      delete companyOutlookData.insideTrades;
-      console.log('Removed "insideTrades" from the Company Outlook data.');
+    let currentPrice = null;
+    if (quoteData && quoteData.length > 0) {
+      currentPrice = quoteData[0].price;
+    } else {
+      console.log('No current price data available.');
     }
 
     // Fetch ESG data for the current year
@@ -135,24 +137,23 @@ exports.handler = async (event, context) => {
     const esgResponse = await fetch(esgApiUrl);
     console.log(`ESG data API response status: ${esgResponse.status}`);
 
-    if (!esgResponse.ok) {
+    let esgScore = null;
+    if (esgResponse.ok) {
+      const esgDataArray = await esgResponse.json();
+      console.log(`ESG data received: ${JSON.stringify(esgDataArray)}`);
+
+      if (esgDataArray && esgDataArray.length > 0) {
+        const latestEsgData = esgDataArray[0];
+        esgScore = latestEsgData.totalEsg;
+      } else {
+        console.log('No ESG data available for the current year.');
+      }
+    } else {
       const errorText = await esgResponse.text();
       console.error(`ESG data API error: ${esgResponse.status} ${esgResponse.statusText} - ${errorText}`);
-      throw new Error(`ESG data API error: ${esgResponse.status} ${esgResponse.statusText}`);
     }
 
-    const esgDataArray = await esgResponse.json();
-    console.log(`ESG data received: ${JSON.stringify(esgDataArray)}`);
-
-    // Include ESG data into the companyOutlookData
-    if (esgDataArray && esgDataArray.length > 0) {
-      const latestEsgData = esgDataArray[0];
-      companyOutlookData.esgData = latestEsgData;
-    } else {
-      console.log('No ESG data available for the current year.');
-    }
-
-    // Fetch Technical Indicators data for the past 30 days
+    // Fetch latest RSI (14-day)
     const today = new Date();
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(today.getDate() - 30);
@@ -173,66 +174,38 @@ exports.handler = async (event, context) => {
     const technicalIndicatorsResponse = await fetch(technicalIndicatorsUrl);
     console.log(`Technical Indicators API response status: ${technicalIndicatorsResponse.status}`);
 
-    if (!technicalIndicatorsResponse.ok) {
+    let latestRsi = null;
+    if (technicalIndicatorsResponse.ok) {
+      const technicalIndicatorsData = await technicalIndicatorsResponse.json();
+      console.log(`Technical Indicators data received: ${JSON.stringify(technicalIndicatorsData)}`);
+
+      if (technicalIndicatorsData && technicalIndicatorsData.length > 0) {
+        latestRsi = technicalIndicatorsData[0].rsi;
+      } else {
+        console.log('No Technical Indicators data available for the past 30 days.');
+      }
+    } else {
       const errorText = await technicalIndicatorsResponse.text();
       console.error(`Technical Indicators API error: ${technicalIndicatorsResponse.status} ${technicalIndicatorsResponse.statusText} - ${errorText}`);
-      throw new Error(`Technical Indicators API error: ${technicalIndicatorsResponse.status} ${technicalIndicatorsResponse.statusText}`);
     }
 
-    const technicalIndicatorsData = await technicalIndicatorsResponse.json();
-    console.log(`Technical Indicators data received: ${JSON.stringify(technicalIndicatorsData)}`);
+    // Prepare a concise summary
+    const summaryData = {
+      symbol: symbolUpper,
+      currentPrice,
+      esgScore,
+      latestRsi,
+    };
 
-    // Include Technical Indicators data into the companyOutlookData
-    if (technicalIndicatorsData && technicalIndicatorsData.length > 0) {
-      companyOutlookData.technicalIndicators = technicalIndicatorsData;
-    } else {
-      console.log('No Technical Indicators data available for the past 30 days.');
-    }
-
-    // Fetch Current Price
-    const quoteUrl = `https://financialmodelingprep.com/api/v3/quote/${symbolUpper}?apikey=${fmpApiKey}`;
-    console.log(`Fetching current price from URL: ${quoteUrl}`);
-
-    const quoteResponse = await fetch(quoteUrl);
-    console.log(`Quote API response status: ${quoteResponse.status}`);
-
-    if (!quoteResponse.ok) {
-      const errorText = await quoteResponse.text();
-      console.error(`Quote API error: ${quoteResponse.status} ${quoteResponse.statusText} - ${errorText}`);
-      throw new Error(`Quote API error: ${quoteResponse.status} ${quoteResponse.statusText}`);
-    }
-
-    const quoteData = await quoteResponse.json();
-    console.log(`Quote data received: ${JSON.stringify(quoteData)}`);
-
-    if (quoteData && quoteData.length > 0) {
-      companyOutlookData.currentPrice = quoteData[0].price;
-    } else {
-      console.log('No current price data available.');
-      companyOutlookData.currentPrice = null;
-    }
-
-    // Remove unnecessary data to reduce the size
-    if (companyOutlookData.stockNews) {
-      delete companyOutlookData.stockNews;
-      console.log('Removed "stockNews" from the Company Outlook data.');
-    }
-    if (companyOutlookData.splitsHistory) {
-      delete companyOutlookData.splitsHistory;
-      console.log('Removed "splitsHistory" from the Company Outlook data.');
-    }
-
-    // Prepare the prompt for the AI
-    const promptData = JSON.stringify(companyOutlookData, null, 2);
-
+    // Prepare the prompt
     const prompt = `
-Analyze the following stock data with emphasis on the most recent information and provide an investment recommendation.
+You are an AI investment analyst. Based on the following data for ${symbolUpper}, provide an investment recommendation:
 
-**Stock Data (focus on the latest ESG data for this year, Technical Indicators for the past 30 days, and current price):**
-${promptData}
+- **Current Price**: $${summaryData.currentPrice ?? 'N/A'}
+- **Total ESG Score**: ${summaryData.esgScore ?? 'N/A'}
+- **Latest RSI (14-day)**: ${summaryData.latestRsi ?? 'N/A'}
 
-**Task:**
-Based on the above data, especially the recent data, provide an investment recommendation. The response should be in JSON format as shown below:
+Respond in JSON format as shown:
 
 \`\`\`json
 {
@@ -244,73 +217,54 @@ Based on the above data, especially the recent data, provide an investment recom
 \`\`\`
 
 **Guidelines:**
-- Ensure the JSON structure is strictly followed.
-- The "rating" should be one of "Buy", "Sell", or "Hold".
-- "target_price" should be a numerical value representing the target price in USD.
-- "reason" should be concise, no longer than two sentences.
-- "confidence" should be a numerical value between 1 and 100 indicating the confidence level.
-- Focus on the most recent data in your analysis.
+- The "rating" should be "Buy", "Sell", or "Hold".
+- "target_price" should be a numerical value in USD.
+- "reason" should be concise, up to two sentences.
+- "confidence" should be a numerical value between 1 and 100.
 `;
 
-    // Function to call Google's PaLM API (Gemini)
-    const callGeminiAPI = async (prompt, retries = 3, delay = 1000) => {
-      for (let attempt = 1; attempt <= retries; attempt++) {
-        try {
-          console.log(`Attempt ${attempt}: Sending prompt to Gemini API`);
+    // Function to call the Gemini API (PaLM API) using a service account
+    const callGeminiAPI = async (prompt) => {
+      try {
+        console.log(`Sending prompt to Gemini API`);
 
-          const apiKey = process.env.GEMINI_API_KEY; // Use your Gemini API key
-          const apiUrl = 'https://generativelanguage.googleapis.com/v1beta2/models/text-bison-001:generateText';
+        // Authenticate using a service account
+        const auth = new GoogleAuth({
+          scopes: ['https://www.googleapis.com/auth/generative-language'],
+        });
 
-          const response = await fetch(`${apiUrl}?key=${apiKey}`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
+        const client = await auth.getClient();
+
+        const apiUrl = 'https://generativelanguage.googleapis.com/v1beta2/models/text-bison-001:generateText';
+
+        const response = await client.request({
+          url: apiUrl,
+          method: 'POST',
+          params: {
+            key: process.env.GEMINI_API_KEY, // If needed, or remove if using service account only
+          },
+          data: {
+            prompt: {
+              text: prompt,
             },
-            body: JSON.stringify({
-              prompt: {
-                text: prompt,
-              },
-              temperature: 0.7,
-              candidateCount: 1,
-              maxOutputTokens: 1000,
-              topP: 0.95,
-              topK: 40,
-            }),
-          });
+            temperature: 0.7,
+            candidateCount: 1,
+            maxOutputTokens: 500,
+            topP: 0.95,
+            topK: 40,
+          },
+        });
 
-          console.log(`Gemini API Response Status: ${response.status}`);
+        console.log(`Gemini API Response Status: ${response.status}`);
 
-          if (response.status === 429) {
-            console.warn(`Rate limit hit on attempt ${attempt}. Retrying in ${delay}ms...`);
-            if (attempt < retries) {
-              await new Promise((res) => setTimeout(res, delay));
-              delay *= 2;
-              continue;
-            } else {
-              throw new Error('Rate limit exceeded. Please try again later.');
-            }
-          }
-
-          if (!response.ok) {
-            const errorData = await response.text();
-            console.error(`Gemini API error: ${response.status} ${response.statusText} - ${errorData}`);
-            throw new Error(`Gemini API error: ${response.status} ${response.statusText}`);
-          }
-
-          return response;
-        } catch (error) {
-          console.error(`Attempt ${attempt} failed: ${error.message}`);
-          if (attempt === retries) {
-            throw new Error('Exceeded maximum retries due to rate limits or other errors.');
-          }
-          console.log(`Waiting for ${delay}ms before next retry...`);
-          await new Promise((res) => setTimeout(res, delay));
-          delay *= 2;
-        }
+        return response;
+      } catch (error) {
+        console.error(`Gemini API call failed: ${error.message}`);
+        throw new Error(`Gemini API call failed: ${error.message}`);
       }
     };
 
-    // Call Gemini API with controlled retry logic
+    // Call Gemini API
     const aiResponse = await callGeminiAPI(prompt);
 
     if (!aiResponse) {
@@ -318,10 +272,10 @@ Based on the above data, especially the recent data, provide an investment recom
       throw new Error('Gemini API did not return a response.');
     }
 
-    // Attempt to parse the AI response
+    // Parse the AI response
     let aiData;
     try {
-      aiData = await aiResponse.json();
+      aiData = aiResponse.data;
       console.log(`AI Response Data: ${JSON.stringify(aiData)}`);
     } catch (parseError) {
       console.error('Failed to parse AI response as JSON:', parseError);
@@ -382,7 +336,7 @@ Based on the above data, especially the recent data, provide an investment recom
     await docRef.set({
       symbol: symbolUpper,
       recommendation: parsedAiData,
-      current_price: companyOutlookData.currentPrice,
+      current_price: currentPrice,
       lastFetched: now,
       updatedAt: now,
     });
@@ -398,7 +352,7 @@ Based on the above data, especially the recent data, provide an investment recom
       },
       body: JSON.stringify({
         ...parsedAiData,
-        current_price: companyOutlookData.currentPrice,
+        current_price: currentPrice,
       }),
     };
   } catch (error) {
