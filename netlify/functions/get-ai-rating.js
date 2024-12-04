@@ -15,7 +15,7 @@ if (!admin.apps.length) {
       auth_uri: process.env.FIREBASE_AUTH_URI,
       token_uri: process.env.FIREBASE_TOKEN_URI,
       auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_X509_CERT_URL,
-      client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL
+      client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL,
     }),
     // Add other Firebase configurations if necessary
   });
@@ -239,7 +239,7 @@ exports.handler = async (event, context) => {
         "rating": "Buy/Sell/Hold",
         "target_price": "target price in USD",
         "reason": "a very short reason",
-        "criteria_count": 10
+        "confidence": 95
       }
       \`\`\`
 
@@ -248,6 +248,7 @@ exports.handler = async (event, context) => {
       - The "rating" should be one of "Buy", "Sell", or "Hold".
       - "target_price" should be a numerical value representing the target price in USD.
       - "reason" should be concise, no longer than two sentences.
+      - "confidence" should be a numerical value between 1 and 100 indicating the confidence level.
       - Focus on the most recent data in your analysis.
     `;
 
@@ -276,7 +277,7 @@ exports.handler = async (event, context) => {
           if (response.status === 429) {
             console.warn(`Rate limit hit on attempt ${attempt}. Retrying in ${delay}ms...`);
             if (attempt < retries) {
-              await new Promise(res => setTimeout(res, delay));
+              await new Promise((res) => setTimeout(res, delay));
               delay *= 2;
               continue;
             } else {
@@ -297,7 +298,7 @@ exports.handler = async (event, context) => {
             throw new Error('Exceeded maximum retries due to rate limits or other errors.');
           }
           console.log(`Waiting for ${delay}ms before next retry...`);
-          await new Promise(res => setTimeout(res, delay));
+          await new Promise((res) => setTimeout(res, delay));
           delay *= 2;
         }
       }
@@ -321,9 +322,13 @@ exports.handler = async (event, context) => {
       throw new Error('Failed to parse AI response as JSON.');
     }
 
-    const aiContent = aiData.choices && aiData.choices[0] && aiData.choices[0].message && aiData.choices[0].message.content
-      ? aiData.choices[0].message.content.trim()
-      : null;
+    const aiContent =
+      aiData.choices &&
+      aiData.choices[0] &&
+      aiData.choices[0].message &&
+      aiData.choices[0].message.content
+        ? aiData.choices[0].message.content.trim()
+        : null;
     console.log(`AI Content: ${aiContent}`);
 
     if (!aiContent) {
@@ -359,9 +364,13 @@ exports.handler = async (event, context) => {
       console.error('Invalid reason format received from AI.');
       throw new Error('Invalid reason format received from AI.');
     }
-    if (typeof parsedAiData.criteria_count !== 'number') {
-      console.error('Invalid criteria count received from AI.');
-      throw new Error('Invalid criteria count received from AI.');
+    if (
+      typeof parsedAiData.confidence !== 'number' ||
+      parsedAiData.confidence < 1 ||
+      parsedAiData.confidence > 100
+    ) {
+      console.error('Invalid confidence value received from AI.');
+      throw new Error('Invalid confidence value received from AI.');
     }
 
     // Store the AI Rating along with current price in Firestore for caching
@@ -370,7 +379,7 @@ exports.handler = async (event, context) => {
       recommendation: parsedAiData,
       current_price: companyOutlookData.currentPrice,
       lastFetched: now,
-      updatedAt: now
+      updatedAt: now,
     });
     console.log(`Stored AI Rating for symbol: ${symbolUpper}`);
 
@@ -387,7 +396,6 @@ exports.handler = async (event, context) => {
         current_price: companyOutlookData.currentPrice,
       }),
     };
-
   } catch (error) {
     console.error('Error in get-ai-rating function:', error);
     return {
