@@ -4,22 +4,9 @@
   functions = "netlify/functions"
   edge_functions = "netlify/edge-functions"
 
-# Functions configuration
-[[functions]]
-  path = "/.netlify/functions/allowed-tickers"
-  function = "allowed-tickers"
-
-[[functions]]
-  path = "/.netlify/functions/get-ai-rating"
-  function = "get-ai-rating"
-
-[[functions]]
-  path = "/.netlify/functions/get-gemini-ai-rating"
-  function = "get-gemini-ai-rating"
-
-[[functions]]
-  path = "/.netlify/functions/getNews"
-  function = "getNews"
+[functions]
+  # Any global configuration for functions can go here, such as external modules
+  node_bundler = "esbuild"
 
 # Edge Functions
 [[edge_functions]]
