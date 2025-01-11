@@ -4,7 +4,6 @@
   functions = "netlify/functions"
   edge_functions = "netlify/edge-functions"
 
-# Edge Functions
 [[edge_functions]]
   path = "/.netlify/edge-functions/get-api-key"
   function = "get-api-key"
@@ -28,7 +27,3 @@
 [[edge_functions]]
   path = "/.netlify/edge-functions/get-firebase-storage-bucket"
   function = "get-firebase-storage-bucket"
-
-[[edge_functions]]
-  path = "/.netlify/edge-functions/get-allowed-tickers"
-  function = "get-allowed-tickers"
