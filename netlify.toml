@@ -1,31 +1,10 @@
 [build]
   command = "npm run build"
-  publish = ".next" # Update this if your build output is in a different directory
+  publish = ".next"
   functions = "netlify/functions"
+  edge_functions = "netlify/edge-functions"
 
-[functions]
-  directory = "netlify/functions"
-  node_bundler = "esbuild"
-
-[[functions]]
-  path = "/.netlify/functions/getAllowedTickers"
-  function = "getAllowedTickers"
-
-[[functions]]
-  path = "/.netlify/functions/get-ai-rating"
-  function = "get-ai-rating"
-
-[[functions]]
-  path = "/.netlify/functions/get-gemini-ai-rating"
-  function = "get-gemini-ai-rating"
-
-[[functions]]
-  path = "/.netlify/functions/getNews"
-  function = "getNews"
-
-[edge_functions]
-  directory = "netlify/edge-functions"
-
+# Edge Functions
 [[edge_functions]]
   path = "/.netlify/edge-functions/get-api-key"
   function = "get-api-key"
@@ -50,6 +29,7 @@
   path = "/.netlify/edge-functions/get-firebase-storage-bucket"
   function = "get-firebase-storage-bucket"
 
-[[edge_functions]]
-  path = "/.netlify/edge-functions/get-allowed-tickers"
-  function = "get-allowed-tickers"
+# Add the new allowed-tickers function here
+[[functions]]
+  path = "/.netlify/functions/getAllowedTickers"
+  function = "getAllowedTickers"
