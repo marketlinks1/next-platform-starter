@@ -1,14 +1,31 @@
 [build]
   command = "npm run build"
-  publish = ".next"
+  publish = ".next" # Update this if your build output is in a different directory
   functions = "netlify/functions"
-  edge_functions = "netlify/edge-functions"
 
 [functions]
-  # Any global configuration for functions can go here, such as external modules
+  directory = "netlify/functions"
   node_bundler = "esbuild"
 
-# Edge Functions
+[[functions]]
+  path = "/.netlify/functions/getAllowedTickers"
+  function = "getAllowedTickers"
+
+[[functions]]
+  path = "/.netlify/functions/get-ai-rating"
+  function = "get-ai-rating"
+
+[[functions]]
+  path = "/.netlify/functions/get-gemini-ai-rating"
+  function = "get-gemini-ai-rating"
+
+[[functions]]
+  path = "/.netlify/functions/getNews"
+  function = "getNews"
+
+[edge_functions]
+  directory = "netlify/edge-functions"
+
 [[edge_functions]]
   path = "/.netlify/edge-functions/get-api-key"
   function = "get-api-key"
@@ -33,8 +50,6 @@
   path = "/.netlify/edge-functions/get-firebase-storage-bucket"
   function = "get-firebase-storage-bucket"
 
-# Redirect rules (optional)
-[[redirects]]
-  from = "/allowed-tickers"
-  to = "/.netlify/functions/allowed-tickers"
-  status = 200
+[[edge_functions]]
+  path = "/.netlify/edge-functions/get-allowed-tickers"
+  function = "get-allowed-tickers"
