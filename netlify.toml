@@ -4,6 +4,23 @@
   functions = "netlify/functions"
   edge_functions = "netlify/edge-functions"
 
+# Functions configuration
+[[functions]]
+  path = "/.netlify/functions/allowed-tickers"
+  function = "allowed-tickers"
+
+[[functions]]
+  path = "/.netlify/functions/get-ai-rating"
+  function = "get-ai-rating"
+
+[[functions]]
+  path = "/.netlify/functions/get-gemini-ai-rating"
+  function = "get-gemini-ai-rating"
+
+[[functions]]
+  path = "/.netlify/functions/getNews"
+  function = "getNews"
+
 # Edge Functions
 [[edge_functions]]
   path = "/.netlify/edge-functions/get-api-key"
@@ -29,5 +46,8 @@
   path = "/.netlify/edge-functions/get-firebase-storage-bucket"
   function = "get-firebase-storage-bucket"
 
-# Standard Serverless Functions (Optional - no path needed, all serverless functions auto-detected)
-# No additional configuration is required for standard functions like `getAllowedTickers`.
+# Redirect rules (optional)
+[[redirects]]
+  from = "/allowed-tickers"
+  to = "/.netlify/functions/allowed-tickers"
+  status = 200
