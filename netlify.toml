@@ -28,3 +28,6 @@
 [[edge_functions]]
   path = "/.netlify/edge-functions/get-firebase-storage-bucket"
   function = "get-firebase-storage-bucket"
+
+# Standard Serverless Functions (Optional - no path needed, all serverless functions auto-detected)
+# No additional configuration is required for standard functions like `getAllowedTickers`.
