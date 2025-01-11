@@ -1,0 +1,104 @@
+const admin = require('firebase-admin');
+
+// Initialize Firebase Admin SDK
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      type: process.env.FIREBASE_TYPE,
+      project_id: process.env.FIREBASE_PROJECT_ID,
+      private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      client_id: process.env.FIREBASE_CLIENT_ID,
+      auth_uri: process.env.FIREBASE_AUTH_URI,
+      token_uri: process.env.FIREBASE_TOKEN_URI,
+      auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_X509_CERT_URL,
+      client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL,
+    }),
+  });
+}
+
+const db = admin.firestore();
+
+exports.handler = async (event, context) => {
+  const { action } = event.queryStringParameters;
+
+  // Set up CORS
+  const origin = event.headers.origin;
+  const allowedOrigins = ['https://amldash.webflow.io'];
+  const corsHeader = allowedOrigins.includes(origin) ? origin : 'https://amldash.webflow.io';
+
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 200,
+      headers: {
+        'Access-Control-Allow-Origin': corsHeader,
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      },
+      body: '',
+    };
+  }
+
+  try {
+    if (action === 'updateAllowedTickers') {
+      // Update the `allowed-tickers` collection
+      const tickers = [
+        { symbol: 'AAPL', name: 'Apple Inc.', exchange: 'NASDAQ' },
+        { symbol: 'MSFT', name: 'Microsoft Corp.', exchange: 'NASDAQ' },
+        { symbol: 'GOOGL', name: 'Alphabet Inc.', exchange: 'NASDAQ' },
+        { symbol: 'TSLA', name: 'Tesla Inc.', exchange: 'NASDAQ' },
+      ];
+
+      const batch = db.batch();
+      tickers.forEach((ticker) => {
+        const docRef = db.collection('allowed-tickers').doc(ticker.symbol);
+        batch.set(docRef, ticker);
+      });
+      await batch.commit();
+
+      return {
+        statusCode: 200,
+        headers: {
+          'Access-Control-Allow-Origin': corsHeader,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: 'Allowed tickers updated successfully.' }),
+      };
+    }
+
+    if (action === 'getAllowedTickers') {
+      // Fetch allowed tickers
+      const allowedTickersSnapshot = await db.collection('allowed-tickers').get();
+      const allowedTickers = allowedTickersSnapshot.docs.map((doc) => doc.data());
+
+      return {
+        statusCode: 200,
+        headers: {
+          'Access-Control-Allow-Origin': corsHeader,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(allowedTickers),
+      };
+    }
+
+    return {
+      statusCode: 400,
+      headers: {
+        'Access-Control-Allow-Origin': corsHeader,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ error: 'Invalid action specified' }),
+    };
+  } catch (error) {
+    console.error('Error:', error);
+    return {
+      statusCode: 500,
+      headers: {
+        'Access-Control-Allow-Origin': corsHeader,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ error: error.message }),
+    };
+  }
+};
