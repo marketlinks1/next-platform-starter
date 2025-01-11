@@ -1,10 +1,10 @@
-const admin = require('firebase-admin');
+import fetch from 'node-fetch'; // Import fetch for API requests
+import admin from 'firebase-admin'; // Import Firebase Admin SDK
 
-// Initialize Firebase Admin SDK
+// Initialize Firebase Admin SDK (ensure it's only initialized once)
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert({
-      // Your Firebase credentials
       type: process.env.FIREBASE_TYPE,
       project_id: process.env.FIREBASE_PROJECT_ID,
       private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
@@ -19,70 +19,46 @@ if (!admin.apps.length) {
   });
 }
 
-const db = admin.firestore();
+const db = admin.firestore(); // Initialize Firestore
 
-exports.handler = async (event) => {
-  // Enable CORS
-  const allowedOrigins = ['https://amldash.webflow.io', 'https://your-site-url.com'];
-  const origin = event.headers.origin || '';
-  const corsHeader = allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
-
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 200,
-      headers: {
-        'Access-Control-Allow-Origin': corsHeader,
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      },
-      body: '',
-    };
-  }
-
+export default async (request) => {
   try {
-    console.log(`Fetching allowed tickers...`);
+    const url = new URL(request.url);
+    const action = url.searchParams.get('action'); // Get the 'action' query parameter
 
-    // Fetch allowed tickers from Firestore
-    const allowedTickersRef = db.collection('allowed-tickers');
-    const snapshot = await allowedTickersRef.get();
-
-    if (snapshot.empty) {
-      console.warn('No allowed tickers found in Firestore.');
-      return {
-        statusCode: 404,
-        headers: {
-          'Access-Control-Allow-Origin': corsHeader,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ error: 'No allowed tickers found.' }),
-      };
+    // Validate the action parameter
+    if (!action || action !== 'getAllowedTickers') {
+      return new Response(JSON.stringify({ error: 'Invalid action' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
 
-    const tickers = [];
-    snapshot.forEach((doc) => {
-      tickers.push({ id: doc.id, ...doc.data() });
+    // Fetch data from Firestore
+    const allowedTickersSnapshot = await db.collection('allowed-tickers').get();
+    const allowedTickers = allowedTickersSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    // Return the allowed tickers as a JSON response
+    return new Response(JSON.stringify(allowedTickers), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*', // CORS Header
+      },
     });
-
-    console.log(`Allowed tickers fetched: ${JSON.stringify(tickers)}`);
-
-    // Return the allowed tickers
-    return {
-      statusCode: 200,
-      headers: {
-        'Access-Control-Allow-Origin': corsHeader,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(tickers),
-    };
   } catch (error) {
-    console.error('Error fetching allowed tickers:', error);
-    return {
-      statusCode: 500,
+    console.error('Error in get-allowed-tickers:', error);
+
+    // Return a 500 response on error
+    return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+      status: 500,
       headers: {
-        'Access-Control-Allow-Origin': corsHeader,
         'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*', // CORS Header
       },
-      body: JSON.stringify({ error: 'Internal Server Error' }),
-    };
+    });
   }
 };
