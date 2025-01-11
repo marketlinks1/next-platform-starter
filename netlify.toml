@@ -1,7 +1,7 @@
 [build]
   command = "npm run build"
   publish = ".next"
-  functions = "netlify/functions"
+  functions = "netlify/functions" # Correctly defines the functions directory
   edge_functions = "netlify/edge-functions"
 
 # Edge Functions
@@ -28,8 +28,3 @@
 [[edge_functions]]
   path = "/.netlify/edge-functions/get-firebase-storage-bucket"
   function = "get-firebase-storage-bucket"
-
-# Add the new allowed-tickers function here
-[[functions]]
-  path = "/.netlify/functions/getAllowedTickers"
-  function = "getAllowedTickers"
