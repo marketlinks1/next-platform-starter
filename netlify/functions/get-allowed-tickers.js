@@ -22,71 +22,50 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 exports.handler = async () => {
+  const exchanges = ['NASDAQ', 'NYSE', 'AMEX', 'LSE', 'EURONEXT', 'TSX'];
+  const apiKey = process.env.FMP_API_KEY;
+  const allowedTickersCollection = db.collection('allowed-tickers');
+
+  let totalTickers = 0;
+
   try {
-    const apiKey = process.env.FMP_API_KEY;
-    const url = `https://financialmodelingprep.com/api/v3/stock/list?apikey=${apiKey}`;
+    for (const exchange of exchanges) {
+      console.log(`Fetching tickers for exchange: ${exchange}`);
 
-    console.log(`Fetching data from URL: ${url}`);
-    const response = await fetch(url);
-    if (!response.ok) {
-      console.error(`Failed to fetch data: ${response.statusText}`);
-      return { statusCode: 500, body: JSON.stringify({ success: false, error: 'Failed to fetch data from FMP API' }) };
+      // Fetch tickers for the current exchange
+      const response = await fetch(
+        `https://financialmodelingprep.com/api/v3/search?exchange=${exchange}&apikey=${apiKey}`
+      );
+
+      if (!response.ok) {
+        console.error(`Error fetching tickers for ${exchange}: ${response.statusText}`);
+        continue;
+      }
+
+      const data = await response.json();
+      console.log(`Fetched ${data.length} tickers for exchange: ${exchange}`);
+
+      for (const ticker of data) {
+        if (ticker.symbol && ticker.name && ticker.exchangeShortName) {
+          const tickerData = {
+            name: ticker.name,
+            symbol: ticker.symbol,
+            exchange: ticker.exchangeShortName,
+            addedAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
+
+          // Add ticker to Firestore
+          await allowedTickersCollection.doc(ticker.symbol).set(tickerData, { merge: true });
+          totalTickers++;
+        }
+      }
     }
-
-    const tickers = await response.json();
-    console.log(`Fetched ${tickers.length} tickers.`);
-
-    // Allowed exchanges map
-    const exchangeNameMap = {
-      NASDAQ: 'NASDAQ',
-      NYSE: 'NYSE',
-      AMEX: 'AMEX',
-      TSX: 'TSX',
-      TSXV: 'TSXV',
-      LSE: 'LSE',
-      EURONEXT: 'EURONEXT',
-    };
-
-    const allowedExchanges = Object.keys(exchangeNameMap);
-
-    // Log unmatched exchanges
-    const unmatchedExchanges = new Set();
-    const filteredTickers = tickers.filter((ticker) => {
-      if (!ticker.exchange) {
-        console.warn(`Missing exchange for ticker: ${ticker.symbol}`);
-        return false;
-      }
-      if (!allowedExchanges.includes(ticker.exchange)) {
-        unmatchedExchanges.add(ticker.exchange);
-        return false;
-      }
-      return true;
-    });
-
-    console.log(`Unmatched exchanges: ${Array.from(unmatchedExchanges).join(', ')}`);
-    console.log(`Filtered tickers count: ${filteredTickers.length}`);
-
-    const batch = db.batch();
-    const collectionRef = db.collection('allowed-tickers');
-
-    // Add filtered tickers to Firestore
-    filteredTickers.forEach((ticker) => {
-      const docRef = collectionRef.doc(ticker.symbol);
-      batch.set(docRef, {
-        name: ticker.name,
-        ticker: ticker.symbol,
-        exchange: exchangeNameMap[ticker.exchange],
-      });
-    });
-
-    await batch.commit();
-    console.log(`Successfully updated ${filteredTickers.length} tickers in Firestore.`);
 
     return {
       statusCode: 200,
       body: JSON.stringify({
         success: true,
-        message: `Successfully updated ${filteredTickers.length} tickers.`,
+        message: `Successfully updated ${totalTickers} tickers.`,
       }),
     };
   } catch (error) {
