@@ -22,62 +22,66 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 exports.handler = async (event, context) => {
-  const exchanges = ['NASDAQ', 'NYSE', 'AMEX', 'LSE', 'EURONEXT', 'TSX']; // Add other exchanges as needed
-  const allowedTickersCollection = db.collection('allowed-tickers');
+  const { exchange } = event.queryStringParameters;
+
+  // Validate the presence of the 'exchange' query parameter
+  if (!exchange) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ success: false, message: "Exchange is required." }),
+    };
+  }
 
   try {
-    console.log('Fetching all tickers...');
-    let totalUpdated = 0;
+    console.log(`Fetching tickers for exchange: ${exchange.toUpperCase()}`);
 
-    for (const exchange of exchanges) {
-      console.log(`Fetching tickers for exchange: ${exchange}`);
-      const url = `https://financialmodelingprep.com/api/v3/stock-screener?exchange=${exchange}&isActivelyTrading=true&apikey=${process.env.FMP_API_KEY}`;
-      const response = await fetch(url);
-      const tickers = await response.json();
+    // Fetch data from the stock screener API
+    const apiUrl = `https://financialmodelingprep.com/api/v3/stock-screener?exchange=${exchange.toUpperCase()}&isActivelyTrading=true&apikey=${process.env.FMP_API_KEY}`;
+    const response = await fetch(apiUrl);
 
-      if (!response.ok) {
-        console.error(`Failed to fetch data for exchange: ${exchange}, Status: ${response.status}`);
-        continue;
-      }
-
-      console.log(`Fetched ${tickers.length} tickers for exchange: ${exchange}`);
-      
-      let processed = 0;
-
-      for (const ticker of tickers) {
-        if (!ticker.symbol || !ticker.exchange || !ticker.name) {
-          continue; // Skip invalid data
-        }
-
-        const tickerData = {
-          symbol: ticker.symbol,
-          name: ticker.name,
-          exchange: ticker.exchange,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        };
-
-        await allowedTickersCollection.doc(ticker.symbol).set(tickerData, { merge: true });
-        processed++;
-
-        if (processed % 500 === 0) {
-          console.log(`Processed ${processed} tickers for exchange: ${exchange}`);
-        }
-      }
-
-      console.log(`Processed ${processed} tickers for exchange: ${exchange}`);
-      totalUpdated += processed;
+    if (!response.ok) {
+      throw new Error(`Failed to fetch data from API: ${response.statusText}`);
     }
 
-    console.log(`Successfully updated ${totalUpdated} tickers in total.`);
+    const tickers = await response.json();
+    console.log(`Fetched ${tickers.length} tickers for exchange: ${exchange.toUpperCase()}`);
+
+    if (tickers.length === 0) {
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ success: true, message: "No tickers found to update." }),
+      };
+    }
+
+    // Save tickers to Firestore collection 'tickers'
+    let processedCount = 0;
+    const batch = db.batch();
+
+    tickers.forEach((ticker) => {
+      const docRef = db.collection('tickers').doc(ticker.symbol); // Use the stock symbol as the document ID
+      batch.set(docRef, {
+        name: ticker.name || null,
+        symbol: ticker.symbol || null,
+        exchange: ticker.exchangeShortName || exchange.toUpperCase(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      processedCount++;
+    });
+
+    // Commit the batch
+    await batch.commit();
+
+    console.log(`Successfully updated ${processedCount} tickers in the "tickers" collection.`);
+
     return {
       statusCode: 200,
-      body: JSON.stringify({ success: true, message: `Successfully updated ${totalUpdated} tickers.` }),
+      body: JSON.stringify({ success: true, message: `Successfully updated ${processedCount} tickers.` }),
     };
   } catch (error) {
-    console.error('Error updating tickers:', error);
+    console.error("Error updating tickers:", error.message);
     return {
       statusCode: 500,
-      body: JSON.stringify({ success: false, error: error.message }),
+      body: JSON.stringify({ success: false, message: error.message }),
     };
   }
 };
