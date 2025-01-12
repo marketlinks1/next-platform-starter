@@ -1,102 +1,89 @@
-import fetch from 'node-fetch';
-import { initializeApp, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+const fetch = require('node-fetch');
+const admin = require('firebase-admin');
 
 // Initialize Firebase Admin SDK
-const app = initializeApp({
-  credential: cert({
-    type: process.env.FIREBASE_TYPE,
-    project_id: process.env.FIREBASE_PROJECT_ID,
-    private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-    private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-    client_email: process.env.FIREBASE_CLIENT_EMAIL,
-    client_id: process.env.FIREBASE_CLIENT_ID,
-    auth_uri: process.env.FIREBASE_AUTH_URI,
-    token_uri: process.env.FIREBASE_TOKEN_URI,
-    auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_X509_CERT_URL,
-    client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL,
-  }),
-});
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      type: process.env.FIREBASE_TYPE,
+      project_id: process.env.FIREBASE_PROJECT_ID,
+      private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      client_id: process.env.FIREBASE_CLIENT_ID,
+      auth_uri: process.env.FIREBASE_AUTH_URI,
+      token_uri: process.env.FIREBASE_TOKEN_URI,
+      auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_X509_CERT_URL,
+      client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL,
+    }),
+  });
+}
 
-const db = getFirestore(app);
+const db = admin.firestore();
 
-// Edge Function Default Export
-export default async (request) => {
-  const allowedOrigins = ['https://amldash.webflow.io'];
-  const origin = request.headers.get('origin');
+// Mapping of short codes to full exchange names
+const exchangeNameMap = {
+  US: 'NASDAQ', // Or NYSE if needed
+  TSX: 'Toronto Stock Exchange',
+  LSE: 'London Stock Exchange',
+  EURONEXT: 'Euronext',
+};
 
-  let corsHeader = '';
-  if (allowedOrigins.includes(origin)) {
-    corsHeader = origin;
-  } else {
-    corsHeader = 'https://amldash.webflow.io';
-  }
-
-  // Handle CORS preflight requests
-  if (request.method === 'OPTIONS') {
-    return new Response('', {
-      status: 200,
-      headers: {
-        'Access-Control-Allow-Origin': corsHeader,
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      },
-    });
-  }
+exports.handler = async (event, context) => {
+  const allowedExchanges = Object.keys(exchangeNameMap); // Use the keys from the exchange map
+  const apiKey = process.env.FMP_API_KEY;
 
   try {
-    console.log('Fetching allowed tickers from Financial Modeling Prep API');
-
-    const fmpApiKey = process.env.FMP_API_KEY;
-    const endpoint = `https://financialmodelingprep.com/api/v3/stock/list?apikey=${fmpApiKey}`;
-    const response = await fetch(endpoint);
+    // Fetch tickers from Financial Modeling Prep API
+    const response = await fetch(
+      `https://financialmodelingprep.com/api/v3/stock/list?apikey=${apiKey}`
+    );
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch allowed tickers. Status: ${response.status}`);
+      const errorText = await response.text();
+      console.error(`Error fetching tickers: ${response.status} - ${errorText}`);
+      throw new Error(`Failed to fetch tickers: ${response.statusText}`);
     }
 
     const tickers = await response.json();
 
-    // Prepare batch write to Firestore
-    const batch = db.batch();
-    const collectionRef = db.collection('allowedTickers');
+    // Filter tickers by allowed exchanges
+    const filteredTickers = tickers.filter((ticker) =>
+      allowedExchanges.includes(ticker.exchange)
+    );
 
-    tickers.forEach((ticker) => {
-      if (ticker.symbol && ticker.name) {
-        const docRef = collectionRef.doc(ticker.symbol);
-        batch.set(docRef, {
-          symbol: ticker.symbol,
-          name: ticker.name,
-          exchange: ticker.exchange,
-          price: ticker.price,
-          currency: ticker.currency,
-          updatedAt: new Date(),
-        });
+    console.log(`Filtered ${filteredTickers.length} tickers from allowed exchanges.`);
+
+    for (const ticker of filteredTickers) {
+      const data = {
+        name: ticker.name || null,
+        ticker: ticker.symbol || null,
+        exchange: exchangeNameMap[ticker.exchange] || null,
+      };
+
+      // Validate required fields
+      if (!data.name || !data.ticker || !data.exchange) {
+        console.error(`Missing required fields for ticker: ${JSON.stringify(data)}`);
+        continue;
       }
-    });
 
-    // Commit batch to Firestore
-    await batch.commit();
-    console.log(`Successfully saved ${tickers.length} tickers to Firestore`);
+      // Save to Firestore
+      await db.collection('allowedTickers').doc(data.ticker).set(data);
+      console.log(`Saved ticker: ${data.ticker}`);
+    }
 
-    return new Response(JSON.stringify({ success: true, message: `${tickers.length} tickers saved successfully` }), {
-      status: 200,
-      headers: {
-        'Access-Control-Allow-Origin': corsHeader,
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Content-Type': 'application/json',
-      },
-    });
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        success: true,
+        message: `Successfully updated ${filteredTickers.length} tickers.`,
+      }),
+    };
   } catch (error) {
-    console.error('Error in get-allowed-tickers function:', error);
-
-    return new Response(JSON.stringify({ success: false, error: error.message }), {
-      status: 500,
-      headers: {
-        'Access-Control-Allow-Origin': corsHeader,
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Content-Type': 'application/json',
-      },
-    });
+    console.error('Error updating tickers:', error.message);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ success: false, error: error.message }),
+    };
   }
 };
