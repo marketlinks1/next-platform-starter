@@ -27,3 +27,9 @@
 [[edge_functions]]
   path = "/.netlify/edge-functions/get-firebase-storage-bucket"
   function = "get-firebase-storage-bucket"
+
+[[edge_functions]]
+  path = "/.netlify/edge-functions/get-allowed-tickers"
+  function = "get-allowed-tickers"
+
+
