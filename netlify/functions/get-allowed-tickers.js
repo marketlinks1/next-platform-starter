@@ -21,49 +21,28 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-exports.handler = async () => {
+exports.handler = async (event) => {
   try {
-    const fmpApiKey = process.env.FMP_API_KEY;
+    const tickersCollection = db.collection('allowed-tickers');
+    const tickers = [];
+    const snapshot = await tickersCollection.get();
 
-    // Define the exchanges to fetch tickers for
-    const exchanges = [
-      { name: 'US', endpoint: `https://financialmodelingprep.com/api/v3/stock/list?apikey=${fmpApiKey}` },
-      { name: 'Canada', endpoint: `https://financialmodelingprep.com/api/v3/stock/list?exchange=TSX&apikey=${fmpApiKey}` },
-      { name: 'Euronext', endpoint: `https://financialmodelingprep.com/api/v3/stock/list?exchange=EURONEXT&apikey=${fmpApiKey}` },
-      { name: 'London', endpoint: `https://financialmodelingprep.com/api/v3/stock/list?exchange=LSE&apikey=${fmpApiKey}` },
-    ];
-
-    // Loop through exchanges and fetch tickers
-    for (const exchange of exchanges) {
-      console.log(`Fetching tickers for ${exchange.name}`);
-      const response = await fetch(exchange.endpoint);
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch tickers for ${exchange.name}: ${response.statusText}`);
-      }
-
-      const tickers = await response.json();
-      console.log(`Fetched ${tickers.length} tickers for ${exchange.name}`);
-
-      // Write tickers to Firestore
-      const batch = db.batch();
-      tickers.forEach((ticker) => {
-        const docRef = db.collection('allowed-tickers').doc(ticker.symbol);
-        batch.set(docRef, { ...ticker, exchange: exchange.name });
-      });
-      await batch.commit();
-      console.log(`Stored tickers for ${exchange.name} in Firestore`);
-    }
+    snapshot.forEach((doc) => {
+      tickers.push({ id: doc.id, ...doc.data() });
+    });
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ message: 'Tickers populated successfully' }),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(tickers),
     };
   } catch (error) {
-    console.error('Error populating tickers:', error);
+    console.error('Error fetching tickers:', error);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: error.message }),
+      body: JSON.stringify({ error: 'Failed to fetch tickers' }),
     };
   }
 };
