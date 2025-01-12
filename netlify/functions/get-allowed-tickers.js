@@ -38,19 +38,42 @@ exports.handler = async (event, context) => {
   try {
     console.log(`Fetching tickers for exchange: ${exchange.toUpperCase()}`);
 
-    // Fetch data from the stock screener API
-    const apiUrl = `https://financialmodelingprep.com/api/v3/stock-screener?exchange=${exchange.toUpperCase()}&apikey=${process.env.FMP_API_KEY}`;
-    const response = await fetch(apiUrl);
+    const fmpApiKey = process.env.FMP_API_KEY;
+    const baseUrl = `https://financialmodelingprep.com/api/v3/stock-screener`;
+    const pageSize = 1000; // Maximum tickers per request
+    let page = 1;
+    let fetchedTickers = [];
+    let totalFetched = 0;
 
-    if (!response.ok) {
-      throw new Error(`Failed to fetch data from API: ${response.statusText}`);
+    // Fetch all tickers using pagination
+    while (true) {
+      const apiUrl = `${baseUrl}?exchange=${exchange.toUpperCase()}&limit=${pageSize}&offset=${
+        (page - 1) * pageSize
+      }&apikey=${fmpApiKey}`;
+      console.log(`Fetching page ${page} from URL: ${apiUrl}`);
+
+      const response = await fetch(apiUrl);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch data from API: ${response.statusText}`);
+      }
+
+      const tickers = await response.json();
+      if (!tickers || tickers.length === 0) {
+        console.log(`No more tickers to fetch. Total fetched: ${totalFetched}`);
+        break;
+      }
+
+      fetchedTickers = fetchedTickers.concat(tickers);
+      totalFetched += tickers.length;
+      console.log(`Fetched ${tickers.length} tickers from page ${page}`);
+      page++;
     }
 
-    const tickers = await response.json();
-    console.log(`Fetched ${tickers.length} tickers for exchange: ${exchange.toUpperCase()}`);
+    console.log(`Total tickers fetched for ${exchange.toUpperCase()}: ${fetchedTickers.length}`);
 
     // Filter out tickers that are not actively trading, ETFs, or funds
-    const filteredTickers = tickers.filter(
+    const filteredTickers = fetchedTickers.filter(
       (ticker) => ticker.isActivelyTrading === true && ticker.isEtf === false && ticker.isFund === false
     );
 
