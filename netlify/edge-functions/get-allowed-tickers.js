@@ -1,31 +1,44 @@
 export default async (request) => {
   try {
-    // Define the allowed tickers
-    const allowedTickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA']; // Example tickers
+    // Get the URL search parameters
+    const url = new URL(request.url);
+    const action = url.searchParams.get("action");
 
-    // Construct the JSON response
-    const response = {
+    // Check if the 'action' parameter is valid
+    if (action !== "getAllowedTickers") {
+      return {
+        statusCode: 400,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ error: "Invalid action" }),
+      };
+    }
+
+    // Define the allowed tickers
+    const allowedTickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]; // Example tickers
+
+    // Return the allowed tickers
+    return {
       statusCode: 200,
       headers: {
-        'Access-Control-Allow-Origin': '*', // Allow cross-origin requests; adjust as needed
-        'Content-Type': 'application/json', // Return as JSON
+        "Access-Control-Allow-Origin": "*",
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify({ tickers: allowedTickers }), // Return the tickers
+      body: JSON.stringify({ tickers: allowedTickers }),
     };
-
-    return response;
   } catch (error) {
-    // Catch and log errors
-    console.error('Error in get-allowed-tickers:', error);
+    console.error("Error in get-allowed-tickers:", error);
 
-    // Return an error response
+    // Handle unexpected errors
     return {
       statusCode: 500,
       headers: {
-        'Access-Control-Allow-Origin': '*', // Allow cross-origin requests
-        'Content-Type': 'application/json', // Return as JSON
+        "Access-Control-Allow-Origin": "*",
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify({ error: 'Internal Server Error' }), // Error message
+      body: JSON.stringify({ error: "Internal Server Error" }),
     };
   }
 };
