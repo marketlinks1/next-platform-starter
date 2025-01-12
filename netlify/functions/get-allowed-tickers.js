@@ -46,6 +46,7 @@ exports.handler = async () => {
 
       for (const ticker of data) {
         console.log(`Processing ticker:`, ticker);
+
         if (ticker.symbol && ticker.name && ticker.exchangeShortName) {
           const tickerData = {
             name: ticker.name,
