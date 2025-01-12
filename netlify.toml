@@ -32,4 +32,4 @@
   path = "/.netlify/edge-functions/get-allowed-tickers"
   function = "get-allowed-tickers"
 
-
+ 
