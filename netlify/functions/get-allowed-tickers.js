@@ -1,15 +1,14 @@
-const fetch = require('node-fetch');
-const admin = require('firebase-admin');
+const fetch = require("node-fetch");
+const admin = require("firebase-admin");
 
-// Initialize Firebase Admin SDK if not already initialized
+// Initialize Firebase Admin SDK
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert({
-      // Firebase credentials
       type: process.env.FIREBASE_TYPE,
       project_id: process.env.FIREBASE_PROJECT_ID,
       private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
       client_email: process.env.FIREBASE_CLIENT_EMAIL,
       client_id: process.env.FIREBASE_CLIENT_ID,
       auth_uri: process.env.FIREBASE_AUTH_URI,
@@ -18,76 +17,102 @@ if (!admin.apps.length) {
       client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL,
     }),
   });
+
+  admin.firestore().settings({ ignoreUndefinedProperties: true });
 }
 
 const db = admin.firestore();
 
-const fetchTickers = async (exchange, startPage, endPage, limit = 100) => {
-  let allTickers = [];
-  for (let page = startPage; page <= endPage; page++) {
-    console.log(`Fetching page ${page} for exchange: ${exchange}`);
-    const url = `https://financialmodelingprep.com/api/v3/stock-screener?exchange=${exchange}&isEtf=false&isFund=false&isActivelyTrading=true&limit=${limit}&page=${page}&apikey=${process.env.FMP_API_KEY}`;
+exports.handler = async (event, context) => {
+  const { exchange } = event.queryStringParameters || {};
+  const allowedExchanges = ["NASDAQ", "NYSE", "AMEX", "LSE", "EURONEXT", "TSX"];
 
-    const response = await fetch(url);
-    const tickers = await response.json();
+  if (!exchange || !allowedExchanges.includes(exchange.toUpperCase())) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({
+        success: false,
+        message: `Invalid or missing exchange. Allowed exchanges: ${allowedExchanges.join(", ")}`,
+      }),
+    };
+  }
 
-    if (!tickers || tickers.length === 0) {
-      console.log(`No more tickers found on page ${page}`);
-      break; // Stop if no more tickers are found
+  try {
+    console.log(`Fetching tickers for exchange: ${exchange.toUpperCase()}`);
+    const collectionRef = db.collection("tickers");
+    const batch = db.batch();
+    const pageSize = 1000;
+    let page = 0;
+    let totalFetched = 0;
+    let processedCount = 0;
+
+    while (true) {
+      const apiUrl = `https://financialmodelingprep.com/api/v3/stock-screener?exchange=${exchange}&isEtf=false&isFund=false&isActivelyTrading=true&apikey=${process.env.FMP_API_KEY}&limit=${pageSize}&offset=${page * pageSize}`;
+      console.log(`Fetching page ${page + 1}: ${apiUrl}`);
+
+      const response = await fetch(apiUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch data: ${response.statusText}`);
+      }
+
+      const tickers = await response.json();
+      if (tickers.length === 0) break;
+
+      console.log(`Fetched ${tickers.length} tickers for page ${page + 1}`);
+      totalFetched += tickers.length;
+
+      tickers.forEach((ticker) => {
+        if (!ticker.symbol || !ticker.name || !ticker.exchange) {
+          console.warn(`Skipping invalid ticker: ${JSON.stringify(ticker)}`);
+          return;
+        }
+
+        const docRef = collectionRef.doc(ticker.symbol);
+        batch.set(docRef, {
+          symbol: ticker.symbol,
+          name: ticker.name,
+          exchange: ticker.exchange,
+          industry: ticker.industry || null,
+          sector: ticker.sector || null,
+          isEtf: ticker.isEtf || false,
+          isFund: ticker.isFund || false,
+          isActivelyTrading: ticker.isActivelyTrading || false,
+          updatedAt: admin.firestore.Timestamp.now(),
+        });
+        processedCount++;
+      });
+
+      page++;
+
+      // Commit the batch after every 500 writes to avoid Firestore batch limits
+      if (processedCount % 500 === 0) {
+        console.log(`Committing batch of 500 tickers...`);
+        await batch.commit();
+        processedCount = 0;
+      }
     }
 
-    allTickers.push(...tickers);
-    console.log(`Fetched ${tickers.length} tickers from page ${page}`);
-  }
-  return allTickers;
-};
+    // Commit any remaining batch writes
+    if (processedCount > 0) {
+      console.log(`Committing final batch of ${processedCount} tickers...`);
+      await batch.commit();
+    }
 
-exports.handler = async (event) => {
-  try {
-    const exchange = event.queryStringParameters.exchange || 'NASDAQ';
-    const startPage = parseInt(event.queryStringParameters.startPage, 10) || 1;
-    const endPage = parseInt(event.queryStringParameters.endPage, 10) || 50;
-    const limit = parseInt(event.queryStringParameters.limit, 10) || 100;
-
-    console.log(`Fetching tickers from page ${startPage} to ${endPage} for exchange: ${exchange}`);
-    const tickers = await fetchTickers(exchange, startPage, endPage, limit);
-
-    console.log(`Fetched a total of ${tickers.length} tickers. Saving to Firestore...`);
-    const batch = db.batch();
-    const collectionRef = db.collection('tickers');
-
-    tickers.forEach((ticker) => {
-      const docRef = collectionRef.doc(ticker.symbol);
-      batch.set(docRef, {
-        symbol: ticker.symbol,
-        name: ticker.name,
-        exchange: ticker.exchange,
-        industry: ticker.industry || null,
-        sector: ticker.sector || null,
-        isEtf: ticker.isEtf,
-        isFund: ticker.isFund,
-        isActivelyTrading: ticker.isActivelyTrading,
-        updatedAt: admin.firestore.Timestamp.now(),
-      });
-    });
-
-    await batch.commit();
-    console.log(`Successfully saved ${tickers.length} tickers to Firestore.`);
-
+    console.log(`Successfully processed ${totalFetched} tickers for exchange: ${exchange.toUpperCase()}`);
     return {
       statusCode: 200,
       body: JSON.stringify({
         success: true,
-        message: `Processed ${tickers.length} tickers from page ${startPage} to ${endPage} for exchange: ${exchange}.`,
+        message: `Successfully processed ${totalFetched} tickers for exchange: ${exchange.toUpperCase()}`,
       }),
     };
   } catch (error) {
-    console.error('Error processing tickers:', error);
+    console.error(`Error processing tickers for exchange ${exchange}:`, error);
     return {
       statusCode: 500,
       body: JSON.stringify({
         success: false,
-        message: error.message,
+        message: `Error processing tickers for exchange ${exchange}: ${error.message}`,
       }),
     };
   }
