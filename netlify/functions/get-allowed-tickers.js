@@ -21,13 +21,21 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-exports.handler = async (event, context) => {
-  const exchanges = ['NASDAQ', 'NYSE', 'AMEX', 'LSE', 'EURONEXT', 'TSX'];
+exports.handler = async (event) => {
+  const { exchange } = event.queryStringParameters;
+
+  if (!exchange) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ success: false, error: 'Exchange is required as a query parameter.' }),
+    };
+  }
+
   const apiKey = process.env.FMP_API_KEY;
   const allowedTickersCollection = db.collection('allowed-tickers');
 
   try {
-    console.log('Fetching all tickers...');
+    console.log(`Fetching tickers for exchange: ${exchange}`);
     const response = await fetch(`https://financialmodelingprep.com/api/v3/stock/list?apikey=${apiKey}`);
     if (!response.ok) {
       console.error(`Error fetching tickers: ${response.statusText}`);
@@ -38,43 +46,39 @@ exports.handler = async (event, context) => {
     }
 
     const data = await response.json();
-    console.log(`Fetched ${data.length} total tickers.`);
+    const filteredTickers = data.filter((ticker) => ticker.exchangeShortName === exchange);
 
-    for (const exchange of exchanges) {
-      console.log(`Processing tickers for exchange: ${exchange}`);
-      const filteredTickers = data.filter((ticker) => ticker.exchangeShortName === exchange);
-      console.log(`Found ${filteredTickers.length} tickers for exchange: ${exchange}`);
+    console.log(`Found ${filteredTickers.length} tickers for exchange: ${exchange}`);
 
-      // Batch process tickers to prevent timeouts
-      for (let i = 0; i < filteredTickers.length; i += 500) {
-        const batch = filteredTickers.slice(i, i + 500);
-        const batchWrites = batch.map((ticker) => {
-          if (ticker.symbol && ticker.name) {
-            const tickerData = {
-              name: ticker.name,
-              symbol: ticker.symbol,
-              exchange: ticker.exchangeShortName,
-              addedAt: admin.firestore.FieldValue.serverTimestamp(),
-            };
+    // Process tickers in smaller batches
+    for (let i = 0; i < filteredTickers.length; i += 500) {
+      const batch = filteredTickers.slice(i, i + 500);
+      const batchWrites = batch.map((ticker) => {
+        if (ticker.symbol && ticker.name) {
+          const tickerData = {
+            name: ticker.name,
+            symbol: ticker.symbol,
+            exchange: ticker.exchangeShortName,
+            addedAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
 
-            return allowedTickersCollection.doc(ticker.symbol).set(tickerData, { merge: true });
-          }
-        });
+          return allowedTickersCollection.doc(ticker.symbol).set(tickerData, { merge: true });
+        }
+      });
 
-        await Promise.all(batchWrites);
-        console.log(`Processed ${Math.min(i + 500, filteredTickers.length)} tickers for exchange: ${exchange}`);
-      }
+      await Promise.all(batchWrites);
+      console.log(`Processed ${Math.min(i + 500, filteredTickers.length)} tickers for exchange: ${exchange}`);
     }
 
     return {
       statusCode: 200,
       body: JSON.stringify({
         success: true,
-        message: `Tickers successfully processed for all exchanges.`,
+        message: `Processed ${filteredTickers.length} tickers for exchange: ${exchange}`,
       }),
     };
   } catch (error) {
-    console.error('Error updating tickers:', error);
+    console.error('Error processing tickers:', error);
     return {
       statusCode: 500,
       body: JSON.stringify({
