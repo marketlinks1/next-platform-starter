@@ -1,79 +1,69 @@
-const { initializeApp } = require("firebase/app");
-const { getFirestore, collection, setDoc, doc } = require("firebase/firestore");
-const fetch = require("node-fetch");
+const fetch = require('node-fetch');
+const admin = require('firebase-admin');
 
-// Firebase Configuration
-const firebaseConfig = {
-  apiKey: process.env.FIREBASE_API_KEY,
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.FIREBASE_PROJECT_ID,
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.FIREBASE_APP_ID,
-  measurementId: process.env.FIREBASE_MEASUREMENT_ID,
-};
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-// Markets Configuration
-const markets = [
-  { exchange: "US", region: "United States" },
-  { exchange: "CA", region: "Canada" },
-  { exchange: "EU", region: "Euronext" },
-  { exchange: "LSE", region: "London" },
-];
-
-// Function to Fetch Tickers
-async function fetchTickers(exchange) {
-  const url = `https://financialmodelingprep.com/api/v3/stock/list?exchange=${exchange}&apikey=${process.env.FMP_API_KEY}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch tickers for exchange ${exchange}`);
-  }
-  return await response.json();
+// Initialize Firebase Admin SDK
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      type: process.env.FIREBASE_TYPE,
+      project_id: process.env.FIREBASE_PROJECT_ID,
+      private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      client_id: process.env.FIREBASE_CLIENT_ID,
+      auth_uri: process.env.FIREBASE_AUTH_URI,
+      token_uri: process.env.FIREBASE_TOKEN_URI,
+      auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_X509_CERT_URL,
+      client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL,
+    }),
+  });
 }
 
-// Function to Save Tickers to Firestore
-async function saveToFirestore(region, tickers) {
-  for (const ticker of tickers) {
-    const tickerDoc = doc(collection(db, "allowed-tickers"), ticker.symbol);
-    await setDoc(tickerDoc, {
-      name: ticker.name,
-      exchange: ticker.exchange,
-      region: region,
-    });
-  }
-}
+const db = admin.firestore();
 
-// Netlify Function Handler
-exports.handler = async (event, context) => {
-  if (event.httpMethod !== "POST") {
-    return {
-      statusCode: 405,
-      body: JSON.stringify({ error: "Method Not Allowed" }),
-    };
-  }
-
+exports.handler = async () => {
   try {
-    for (const market of markets) {
-      console.log(`Fetching tickers for ${market.exchange}...`);
-      const tickers = await fetchTickers(market.exchange);
-      console.log(`Fetched ${tickers.length} tickers for ${market.exchange}`);
-      await saveToFirestore(market.region, tickers);
-      console.log(`Saved tickers for ${market.region}`);
+    const fmpApiKey = process.env.FMP_API_KEY;
+
+    // Define the exchanges to fetch tickers for
+    const exchanges = [
+      { name: 'US', endpoint: `https://financialmodelingprep.com/api/v3/stock/list?apikey=${fmpApiKey}` },
+      { name: 'Canada', endpoint: `https://financialmodelingprep.com/api/v3/stock/list?exchange=TSX&apikey=${fmpApiKey}` },
+      { name: 'Euronext', endpoint: `https://financialmodelingprep.com/api/v3/stock/list?exchange=EURONEXT&apikey=${fmpApiKey}` },
+      { name: 'London', endpoint: `https://financialmodelingprep.com/api/v3/stock/list?exchange=LSE&apikey=${fmpApiKey}` },
+    ];
+
+    // Loop through exchanges and fetch tickers
+    for (const exchange of exchanges) {
+      console.log(`Fetching tickers for ${exchange.name}`);
+      const response = await fetch(exchange.endpoint);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch tickers for ${exchange.name}: ${response.statusText}`);
+      }
+
+      const tickers = await response.json();
+      console.log(`Fetched ${tickers.length} tickers for ${exchange.name}`);
+
+      // Write tickers to Firestore
+      const batch = db.batch();
+      tickers.forEach((ticker) => {
+        const docRef = db.collection('allowed-tickers').doc(ticker.symbol);
+        batch.set(docRef, { ...ticker, exchange: exchange.name });
+      });
+      await batch.commit();
+      console.log(`Stored tickers for ${exchange.name} in Firestore`);
     }
+
     return {
       statusCode: 200,
-      body: JSON.stringify({ message: "Tickers updated successfully" }),
+      body: JSON.stringify({ message: 'Tickers populated successfully' }),
     };
   } catch (error) {
-    console.error("Error updating tickers:", error.message);
+    console.error('Error populating tickers:', error);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: "Failed to update tickers" }),
+      body: JSON.stringify({ error: error.message }),
     };
   }
 };
-
