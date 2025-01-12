@@ -21,70 +21,63 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-exports.handler = async (event) => {
-  const { exchange } = event.queryStringParameters;
-
-  if (!exchange) {
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ success: false, error: 'Exchange is required as a query parameter.' }),
-    };
-  }
-
-  const apiKey = process.env.FMP_API_KEY;
+exports.handler = async (event, context) => {
+  const exchanges = ['NASDAQ', 'NYSE', 'AMEX', 'LSE', 'EURONEXT', 'TSX']; // Add other exchanges as needed
   const allowedTickersCollection = db.collection('allowed-tickers');
 
   try {
-    console.log(`Fetching tickers for exchange: ${exchange}`);
-    const response = await fetch(`https://financialmodelingprep.com/api/v3/stock/list?apikey=${apiKey}`);
-    if (!response.ok) {
-      console.error(`Error fetching tickers: ${response.statusText}`);
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ success: false, error: 'Failed to fetch tickers from API.' }),
-      };
-    }
+    console.log('Fetching all tickers...');
+    let totalUpdated = 0;
 
-    const data = await response.json();
-    const filteredTickers = data.filter((ticker) => ticker.exchangeShortName === exchange);
+    for (const exchange of exchanges) {
+      console.log(`Fetching tickers for exchange: ${exchange}`);
+      const url = `https://financialmodelingprep.com/api/v3/stock-screener?exchange=${exchange}&isActivelyTrading=true&apikey=${process.env.FMP_API_KEY}`;
+      const response = await fetch(url);
+      const tickers = await response.json();
 
-    console.log(`Found ${filteredTickers.length} tickers for exchange: ${exchange}`);
+      if (!response.ok) {
+        console.error(`Failed to fetch data for exchange: ${exchange}, Status: ${response.status}`);
+        continue;
+      }
 
-    // Process tickers in smaller batches
-    for (let i = 0; i < filteredTickers.length; i += 500) {
-      const batch = filteredTickers.slice(i, i + 500);
-      const batchWrites = batch.map((ticker) => {
-        if (ticker.symbol && ticker.name) {
-          const tickerData = {
-            name: ticker.name,
-            symbol: ticker.symbol,
-            exchange: ticker.exchangeShortName,
-            addedAt: admin.firestore.FieldValue.serverTimestamp(),
-          };
+      console.log(`Fetched ${tickers.length} tickers for exchange: ${exchange}`);
+      
+      let processed = 0;
 
-          return allowedTickersCollection.doc(ticker.symbol).set(tickerData, { merge: true });
+      for (const ticker of tickers) {
+        if (!ticker.symbol || !ticker.exchange || !ticker.name) {
+          continue; // Skip invalid data
         }
-      });
 
-      await Promise.all(batchWrites);
-      console.log(`Processed ${Math.min(i + 500, filteredTickers.length)} tickers for exchange: ${exchange}`);
+        const tickerData = {
+          symbol: ticker.symbol,
+          name: ticker.name,
+          exchange: ticker.exchange,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+
+        await allowedTickersCollection.doc(ticker.symbol).set(tickerData, { merge: true });
+        processed++;
+
+        if (processed % 500 === 0) {
+          console.log(`Processed ${processed} tickers for exchange: ${exchange}`);
+        }
+      }
+
+      console.log(`Processed ${processed} tickers for exchange: ${exchange}`);
+      totalUpdated += processed;
     }
 
+    console.log(`Successfully updated ${totalUpdated} tickers in total.`);
     return {
       statusCode: 200,
-      body: JSON.stringify({
-        success: true,
-        message: `Processed ${filteredTickers.length} tickers for exchange: ${exchange}`,
-      }),
+      body: JSON.stringify({ success: true, message: `Successfully updated ${totalUpdated} tickers.` }),
     };
   } catch (error) {
-    console.error('Error processing tickers:', error);
+    console.error('Error updating tickers:', error);
     return {
       statusCode: 500,
-      body: JSON.stringify({
-        success: false,
-        error: error.message,
-      }),
+      body: JSON.stringify({ success: false, error: error.message }),
     };
   }
 };
