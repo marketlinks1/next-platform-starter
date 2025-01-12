@@ -1,8 +1,7 @@
-export default async (request) => {
+exports.handler = async (event) => {
   try {
-    // Get the URL search parameters
-    const url = new URL(request.url);
-    const action = url.searchParams.get("action");
+    // Get the query parameters
+    const { action } = event.queryStringParameters || {};
 
     // Check if the 'action' parameter is valid
     if (action !== "getAllowedTickers") {
