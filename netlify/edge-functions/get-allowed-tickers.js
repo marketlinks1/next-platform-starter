@@ -1,43 +1,47 @@
-exports.handler = async (event) => {
+export default async (request) => {
   try {
-    // Get the query parameters
-    const { action } = event.queryStringParameters || {};
+    // Parse the URL for query parameters
+    const url = new URL(request.url);
+    const action = url.searchParams.get("action");
 
-    // Check if the 'action' parameter is valid
     if (action !== "getAllowedTickers") {
-      return {
-        statusCode: 400,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ error: "Invalid action" }),
-      };
+      return new Response(
+        JSON.stringify({ error: "Invalid action" }),
+        {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          },
+        }
+      );
     }
 
-    // Define the allowed tickers
-    const allowedTickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]; // Example tickers
+    // Allowed tickers array
+    const allowedTickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"];
 
-    // Return the allowed tickers
-    return {
-      statusCode: 200,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ tickers: allowedTickers }),
-    };
+    return new Response(
+      JSON.stringify({ tickers: allowedTickers }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      }
+    );
   } catch (error) {
     console.error("Error in get-allowed-tickers:", error);
 
-    // Handle unexpected errors
-    return {
-      statusCode: 500,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ error: "Internal Server Error" }),
-    };
+    return new Response(
+      JSON.stringify({ error: "Internal Server Error" }),
+      {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      }
+    );
   }
 };
