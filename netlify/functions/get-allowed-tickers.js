@@ -29,25 +29,26 @@ exports.handler = async () => {
   let totalTickers = 0;
 
   try {
+    console.log('Fetching all tickers...');
+    const response = await fetch(`https://financialmodelingprep.com/api/v3/stock/list?apikey=${apiKey}`);
+    if (!response.ok) {
+      console.error(`Error fetching tickers: ${response.statusText}`);
+      return {
+        statusCode: 500,
+        body: JSON.stringify({ success: false, error: 'Failed to fetch tickers from API.' }),
+      };
+    }
+
+    const data = await response.json();
+    console.log(`Fetched ${data.length} total tickers.`);
+
     for (const exchange of exchanges) {
-      console.log(`Fetching tickers for exchange: ${exchange}`);
+      console.log(`Processing tickers for exchange: ${exchange}`);
+      const filteredTickers = data.filter((ticker) => ticker.exchangeShortName === exchange);
 
-      const response = await fetch(
-        `https://financialmodelingprep.com/api/v3/search?exchange=${exchange}&apikey=${apiKey}`
-      );
-
-      if (!response.ok) {
-        console.error(`Error fetching tickers for ${exchange}: ${response.statusText}`);
-        continue;
-      }
-
-      const data = await response.json();
-      console.log(`Fetched ${data.length} tickers for exchange: ${exchange}`);
-
-      for (const ticker of data) {
-        console.log(`Processing ticker:`, ticker);
-
-        if (ticker.symbol && ticker.name && ticker.exchangeShortName) {
+      console.log(`Found ${filteredTickers.length} tickers for exchange: ${exchange}`);
+      for (const ticker of filteredTickers) {
+        if (ticker.symbol && ticker.name) {
           const tickerData = {
             name: ticker.name,
             symbol: ticker.symbol,
@@ -55,11 +56,10 @@ exports.handler = async () => {
             addedAt: admin.firestore.FieldValue.serverTimestamp(),
           };
 
-          console.log(`Adding to Firestore:`, tickerData);
           await allowedTickersCollection.doc(ticker.symbol).set(tickerData, { merge: true });
           totalTickers++;
         } else {
-          console.log(`Skipping ticker due to missing fields:`, ticker);
+          console.log(`Skipping ticker with missing data:`, ticker);
         }
       }
     }
