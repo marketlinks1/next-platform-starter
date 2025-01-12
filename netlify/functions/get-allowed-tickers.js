@@ -21,12 +21,10 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-exports.handler = async () => {
+exports.handler = async (event, context) => {
   const exchanges = ['NASDAQ', 'NYSE', 'AMEX', 'LSE', 'EURONEXT', 'TSX'];
   const apiKey = process.env.FMP_API_KEY;
   const allowedTickersCollection = db.collection('allowed-tickers');
-
-  let totalTickers = 0;
 
   try {
     console.log('Fetching all tickers...');
@@ -45,22 +43,26 @@ exports.handler = async () => {
     for (const exchange of exchanges) {
       console.log(`Processing tickers for exchange: ${exchange}`);
       const filteredTickers = data.filter((ticker) => ticker.exchangeShortName === exchange);
-
       console.log(`Found ${filteredTickers.length} tickers for exchange: ${exchange}`);
-      for (const ticker of filteredTickers) {
-        if (ticker.symbol && ticker.name) {
-          const tickerData = {
-            name: ticker.name,
-            symbol: ticker.symbol,
-            exchange: ticker.exchangeShortName,
-            addedAt: admin.firestore.FieldValue.serverTimestamp(),
-          };
 
-          await allowedTickersCollection.doc(ticker.symbol).set(tickerData, { merge: true });
-          totalTickers++;
-        } else {
-          console.log(`Skipping ticker with missing data:`, ticker);
-        }
+      // Batch process tickers to prevent timeouts
+      for (let i = 0; i < filteredTickers.length; i += 500) {
+        const batch = filteredTickers.slice(i, i + 500);
+        const batchWrites = batch.map((ticker) => {
+          if (ticker.symbol && ticker.name) {
+            const tickerData = {
+              name: ticker.name,
+              symbol: ticker.symbol,
+              exchange: ticker.exchangeShortName,
+              addedAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+
+            return allowedTickersCollection.doc(ticker.symbol).set(tickerData, { merge: true });
+          }
+        });
+
+        await Promise.all(batchWrites);
+        console.log(`Processed ${Math.min(i + 500, filteredTickers.length)} tickers for exchange: ${exchange}`);
       }
     }
 
@@ -68,7 +70,7 @@ exports.handler = async () => {
       statusCode: 200,
       body: JSON.stringify({
         success: true,
-        message: `Successfully updated ${totalTickers} tickers.`,
+        message: `Tickers successfully processed for all exchanges.`,
       }),
     };
   } catch (error) {
