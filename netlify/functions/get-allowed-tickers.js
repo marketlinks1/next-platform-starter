@@ -21,56 +21,66 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-// Mapping of short codes to full exchange names
-const exchangeNameMap = {
-  US: 'NASDAQ', // Or NYSE if needed
-  TSX: 'Toronto Stock Exchange',
-  LSE: 'London Stock Exchange',
-  EURONEXT: 'Euronext',
-};
-
-exports.handler = async (event, context) => {
-  const allowedExchanges = Object.keys(exchangeNameMap); // Use the keys from the exchange map
-  const apiKey = process.env.FMP_API_KEY;
-
+exports.handler = async () => {
   try {
-    // Fetch tickers from Financial Modeling Prep API
-    const response = await fetch(
-      `https://financialmodelingprep.com/api/v3/stock/list?apikey=${apiKey}`
-    );
+    const apiKey = process.env.FMP_API_KEY;
+    const url = `https://financialmodelingprep.com/api/v3/stock/list?apikey=${apiKey}`;
 
+    console.log(`Fetching data from URL: ${url}`);
+    const response = await fetch(url);
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`Error fetching tickers: ${response.status} - ${errorText}`);
-      throw new Error(`Failed to fetch tickers: ${response.statusText}`);
+      console.error(`Failed to fetch data: ${response.statusText}`);
+      return { statusCode: 500, body: JSON.stringify({ success: false, error: 'Failed to fetch data from FMP API' }) };
     }
 
     const tickers = await response.json();
+    console.log(`Fetched ${tickers.length} tickers.`);
 
-    // Filter tickers by allowed exchanges
-    const filteredTickers = tickers.filter((ticker) =>
-      allowedExchanges.includes(ticker.exchange)
-    );
+    // Allowed exchanges map
+    const exchangeNameMap = {
+      NASDAQ: 'NASDAQ',
+      NYSE: 'NYSE',
+      AMEX: 'AMEX',
+      TSX: 'TSX',
+      TSXV: 'TSXV',
+      LSE: 'LSE',
+      EURONEXT: 'EURONEXT',
+    };
 
-    console.log(`Filtered ${filteredTickers.length} tickers from allowed exchanges.`);
+    const allowedExchanges = Object.keys(exchangeNameMap);
 
-    for (const ticker of filteredTickers) {
-      const data = {
-        name: ticker.name || null,
-        ticker: ticker.symbol || null,
-        exchange: exchangeNameMap[ticker.exchange] || null,
-      };
-
-      // Validate required fields
-      if (!data.name || !data.ticker || !data.exchange) {
-        console.error(`Missing required fields for ticker: ${JSON.stringify(data)}`);
-        continue;
+    // Log unmatched exchanges
+    const unmatchedExchanges = new Set();
+    const filteredTickers = tickers.filter((ticker) => {
+      if (!ticker.exchange) {
+        console.warn(`Missing exchange for ticker: ${ticker.symbol}`);
+        return false;
       }
+      if (!allowedExchanges.includes(ticker.exchange)) {
+        unmatchedExchanges.add(ticker.exchange);
+        return false;
+      }
+      return true;
+    });
 
-      // Save to Firestore
-      await db.collection('allowedTickers').doc(data.ticker).set(data);
-      console.log(`Saved ticker: ${data.ticker}`);
-    }
+    console.log(`Unmatched exchanges: ${Array.from(unmatchedExchanges).join(', ')}`);
+    console.log(`Filtered tickers count: ${filteredTickers.length}`);
+
+    const batch = db.batch();
+    const collectionRef = db.collection('allowed-tickers');
+
+    // Add filtered tickers to Firestore
+    filteredTickers.forEach((ticker) => {
+      const docRef = collectionRef.doc(ticker.symbol);
+      batch.set(docRef, {
+        name: ticker.name,
+        ticker: ticker.symbol,
+        exchange: exchangeNameMap[ticker.exchange],
+      });
+    });
+
+    await batch.commit();
+    console.log(`Successfully updated ${filteredTickers.length} tickers in Firestore.`);
 
     return {
       statusCode: 200,
@@ -80,10 +90,13 @@ exports.handler = async (event, context) => {
       }),
     };
   } catch (error) {
-    console.error('Error updating tickers:', error.message);
+    console.error('Error updating tickers:', error);
     return {
       statusCode: 500,
-      body: JSON.stringify({ success: false, error: error.message }),
+      body: JSON.stringify({
+        success: false,
+        error: error.message,
+      }),
     };
   }
 };
