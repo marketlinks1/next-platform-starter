@@ -32,7 +32,6 @@ exports.handler = async () => {
     for (const exchange of exchanges) {
       console.log(`Fetching tickers for exchange: ${exchange}`);
 
-      // Fetch tickers for the current exchange
       const response = await fetch(
         `https://financialmodelingprep.com/api/v3/search?exchange=${exchange}&apikey=${apiKey}`
       );
@@ -46,6 +45,7 @@ exports.handler = async () => {
       console.log(`Fetched ${data.length} tickers for exchange: ${exchange}`);
 
       for (const ticker of data) {
+        console.log(`Processing ticker:`, ticker);
         if (ticker.symbol && ticker.name && ticker.exchangeShortName) {
           const tickerData = {
             name: ticker.name,
@@ -54,9 +54,11 @@ exports.handler = async () => {
             addedAt: admin.firestore.FieldValue.serverTimestamp(),
           };
 
-          // Add ticker to Firestore
+          console.log(`Adding to Firestore:`, tickerData);
           await allowedTickersCollection.doc(ticker.symbol).set(tickerData, { merge: true });
           totalTickers++;
+        } else {
+          console.log(`Skipping ticker due to missing fields:`, ticker);
         }
       }
     }
