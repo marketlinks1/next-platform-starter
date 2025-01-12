@@ -25,10 +25,13 @@ exports.handler = async (event, context) => {
   const { exchange } = event.queryStringParameters;
 
   // Validate the presence of the 'exchange' query parameter
-  if (!exchange) {
+  if (!exchange || exchange.toUpperCase() !== 'NASDAQ') {
     return {
       statusCode: 400,
-      body: JSON.stringify({ success: false, message: "Exchange is required." }),
+      body: JSON.stringify({
+        success: false,
+        message: 'Exchange parameter is required and must be "NASDAQ".',
+      }),
     };
   }
 
@@ -36,7 +39,7 @@ exports.handler = async (event, context) => {
     console.log(`Fetching tickers for exchange: ${exchange.toUpperCase()}`);
 
     // Fetch data from the stock screener API
-    const apiUrl = `https://financialmodelingprep.com/api/v3/stock-screener?exchange=${exchange.toUpperCase()}&isActivelyTrading=true&apikey=${process.env.FMP_API_KEY}`;
+    const apiUrl = `https://financialmodelingprep.com/api/v3/stock-screener?exchange=${exchange.toUpperCase()}&apikey=${process.env.FMP_API_KEY}`;
     const response = await fetch(apiUrl);
 
     if (!response.ok) {
@@ -46,10 +49,20 @@ exports.handler = async (event, context) => {
     const tickers = await response.json();
     console.log(`Fetched ${tickers.length} tickers for exchange: ${exchange.toUpperCase()}`);
 
-    if (tickers.length === 0) {
+    // Filter out tickers that are not actively trading, ETFs, or funds
+    const filteredTickers = tickers.filter(
+      (ticker) => ticker.isActivelyTrading === true && ticker.isEtf === false && ticker.isFund === false
+    );
+
+    console.log(`Filtered down to ${filteredTickers.length} active tickers for exchange: ${exchange.toUpperCase()}`);
+
+    if (filteredTickers.length === 0) {
       return {
         statusCode: 200,
-        body: JSON.stringify({ success: true, message: "No tickers found to update." }),
+        body: JSON.stringify({
+          success: true,
+          message: 'No valid tickers found to update.',
+        }),
       };
     }
 
@@ -57,7 +70,7 @@ exports.handler = async (event, context) => {
     let processedCount = 0;
     const batch = db.batch();
 
-    tickers.forEach((ticker) => {
+    filteredTickers.forEach((ticker) => {
       const docRef = db.collection('tickers').doc(ticker.symbol); // Use the stock symbol as the document ID
       batch.set(docRef, {
         name: ticker.name || null,
@@ -75,13 +88,19 @@ exports.handler = async (event, context) => {
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ success: true, message: `Successfully updated ${processedCount} tickers.` }),
+      body: JSON.stringify({
+        success: true,
+        message: `Successfully updated ${processedCount} tickers.`,
+      }),
     };
   } catch (error) {
     console.error("Error updating tickers:", error.message);
     return {
       statusCode: 500,
-      body: JSON.stringify({ success: false, message: error.message }),
+      body: JSON.stringify({
+        success: false,
+        message: error.message,
+      }),
     };
   }
 };
