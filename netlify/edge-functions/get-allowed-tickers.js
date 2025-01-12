@@ -1,122 +1,62 @@
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, setDoc, doc } from "firebase/firestore";
 import fetch from "node-fetch";
-import admin from "firebase-admin";
 
-// Initialize Firebase Admin SDK
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-    }),
-  });
-}
+// Initialize Firebase
+const firebaseConfig = {
+  apiKey: process.env.FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID,
+  measurementId: process.env.FIREBASE_MEASUREMENT_ID,
+};
 
-const db = admin.firestore();
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
-// Supported exchanges
-const exchanges = [
-  { code: "NASDAQ", name: "US - NASDAQ" },
-  { code: "NYSE", name: "US - NYSE" },
-  { code: "TSX", name: "Canada - TSX" },
-  { code: "EURONEXT", name: "Euronext" },
-  { code: "LSE", name: "London Stock Exchange" },
+// Define stock markets and API details
+const markets = [
+  { region: "US", exchange: "NYSE" },
+  { region: "US", exchange: "NASDAQ" },
+  { region: "CA", exchange: "TSX" },
+  { region: "EU", exchange: "EURONEXT" },
+  { region: "UK", exchange: "LSE" },
 ];
 
-export default async (request) => {
+const FMP_API_KEY = process.env.FMP_API_KEY;
+
+async function fetchTickers(exchange) {
+  const url = `https://financialmodelingprep.com/api/v3/stock-screener?exchange=${exchange}&apikey=${FMP_API_KEY}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch tickers for ${exchange}: ${response.statusText}`);
+  }
+  return await response.json();
+}
+
+async function saveToFirestore(region, tickers) {
+  const collectionRef = collection(db, "allowed-tickers");
+  for (const ticker of tickers) {
+    const docRef = doc(collectionRef, `${region}-${ticker.symbol}`);
+    await setDoc(docRef, { ...ticker, region });
+  }
+}
+
+export default async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method Not Allowed" });
+  }
+
   try {
-    const url = new URL(request.url);
-    const action = url.searchParams.get("action");
-
-    if (action === "updateAllowedTickers") {
-      const apiKey = process.env.FMP_API_KEY;
-      const batch = db.batch();
-
-      for (const exchange of exchanges) {
-        // Fetch tickers for the current exchange
-        const response = await fetch(
-          `https://financialmodelingprep.com/api/v3/stock/list?apikey=${apiKey}`
-        );
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch data for ${exchange.name}`);
-        }
-
-        const data = await response.json();
-
-        // Filter by exchange
-        const filteredTickers = data.filter(
-          (stock) => stock.exchange === exchange.code
-        );
-
-        // Add tickers to Firestore
-        filteredTickers.forEach((stock) => {
-          const docRef = db
-            .collection("allowed-tickers")
-            .doc(stock.symbol.toUpperCase());
-          batch.set(docRef, {
-            name: stock.name,
-            exchange: exchange.name,
-            lastUpdated: admin.firestore.Timestamp.now(),
-          });
-        });
-
-        console.log(`Added ${filteredTickers.length} tickers for ${exchange.name}`);
-      }
-
-      await batch.commit();
-
-      return new Response(
-        JSON.stringify({ message: "Allowed tickers updated successfully" }),
-        {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-          },
-        }
-      );
-    } else if (action === "getAllowedTickers") {
-      const snapshot = await db.collection("allowed-tickers").get();
-      const tickers = snapshot.docs.map((doc) => ({
-        symbol: doc.id,
-        ...doc.data(),
-      }));
-
-      return new Response(
-        JSON.stringify({ tickers }),
-        {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-          },
-        }
-      );
+    for (const market of markets) {
+      const tickers = await fetchTickers(market.exchange);
+      await saveToFirestore(market.region, tickers);
     }
-
-    return new Response(
-      JSON.stringify({ error: "Invalid action" }),
-      {
-        status: 400,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
-      }
-    );
+    res.status(200).json({ message: "Tickers updated successfully" });
   } catch (error) {
-    console.error("Error in get-allowed-tickers:", error);
-
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      {
-        status: 500,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
-      }
-    );
+    console.error("Error updating tickers:", error);
+    res.status(500).json({ error: "Failed to update tickers" });
   }
 };
