@@ -1,5 +1,7 @@
 const fetch = require('node-fetch');
 
+const allowedOrigins = ['https://amldash.webflow.io', 'https://www.themarketlinks.com'];
+
 // Helper function: Calculate Simple Moving Average (SMA)
 function calculateSMA(data, period) {
   if (data.length < period) return null;
@@ -117,12 +119,16 @@ exports.handler = async function (event, context) {
     // Calculate final recommendation
     const finalRecommendation = getRecommendation(scores);
 
+    // Get the origin from the incoming request
+    const origin = event.headers.origin;
+    const allowOrigin = allowedOrigins.includes(origin) ? origin : '';
+
     // Return the response
     return {
       statusCode: 200,
       headers: {
-        'Access-Control-Allow-Origin': 'https://amldash.webflow.io, https://www.themarketlinks.com',  // Allow Webflow and TheMarketLinks
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',  // Allow GET requests
+        'Access-Control-Allow-Origin': allowOrigin,  // Dynamically set allowed origin
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type'
       },
       body: JSON.stringify({
@@ -137,10 +143,13 @@ exports.handler = async function (event, context) {
     };
 
   } catch (error) {
+    const origin = event.headers.origin;
+    const allowOrigin = allowedOrigins.includes(origin) ? origin : '';
+
     return {
       statusCode: 500,
       headers: {
-        'Access-Control-Allow-Origin': 'https://amldash.webflow.io, https://www.themarketlinks.com',  // Allow Webflow and TheMarketLinks
+        'Access-Control-Allow-Origin': allowOrigin,  // Dynamically set allowed origin
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type'
       },
