@@ -120,6 +120,11 @@ exports.handler = async function (event, context) {
     // Return the response
     return {
       statusCode: 200,
+      headers: {
+        'Access-Control-Allow-Origin': 'https://amldash.webflow.io, https://www.themarketlinks.com',  // Allow Webflow and TheMarketLinks
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',  // Allow GET requests
+        'Access-Control-Allow-Headers': 'Content-Type'
+      },
       body: JSON.stringify({
         symbol,
         rsi: rsi?.toFixed(2) || 'N/A',
@@ -134,6 +139,11 @@ exports.handler = async function (event, context) {
   } catch (error) {
     return {
       statusCode: 500,
+      headers: {
+        'Access-Control-Allow-Origin': 'https://amldash.webflow.io, https://www.themarketlinks.com',  // Allow Webflow and TheMarketLinks
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type'
+      },
       body: JSON.stringify({ error: error.message })
     };
   }
