@@ -13,7 +13,10 @@ function calculateRSI(data, period = 14) {
   let gains = 0, losses = 0;
 
   for (let i = 1; i < period + 1; i++) {
-    const change = (data[i - 1].close || 0) - (data[i].close || 0);
+    const currentClose = data[i - 1]?.close || 0;
+    const previousClose = data[i]?.close || 0;
+    const change = currentClose - previousClose;
+
     if (change > 0) gains += change;
     else losses -= change;
   }
@@ -42,10 +45,10 @@ function calculateMACD(data, shortPeriod = 12, longPeriod = 26, signalPeriod = 9
 // Helper function: Calculate EMA
 function calculateEMA(data, period) {
   const smoothingFactor = 2 / (period + 1);
-  let ema = data[0].close || 0; // Initial EMA is the first price
+  let ema = data[0]?.close || 0; // Initial EMA is the first price
 
   for (let i = 1; i < period; i++) {
-    ema = ((data[i].close || 0) - ema) * smoothingFactor + ema;
+    ema = ((data[i]?.close || 0) - ema) * smoothingFactor + ema;
   }
   return ema;
 }
@@ -90,6 +93,7 @@ exports.handler = async function (event, context) {
       throw new Error('No historical data available');
     }
 
+    // Filter out any entries without valid 'close' prices
     const historicalPrices = data.historical.filter(day => day.close !== undefined && day.close !== null);
     if (historicalPrices.length < 50) {
       throw new Error('Insufficient historical data for technical analysis');
@@ -107,7 +111,7 @@ exports.handler = async function (event, context) {
       rsi: rsi < 20 ? 2 : rsi < 30 ? 1 : rsi > 80 ? -2 : rsi > 70 ? -1 : 0,
       ma: shortSMA > longSMA ? 1 : shortSMA < longSMA ? -1 : 0,
       macd: macd && macd.macdLine > macd.macdSignalLine ? 1 : -1,
-      bollinger: historicalPrices[0].close < bollingerBands.lowerBand ? 1 : historicalPrices[0].close > bollingerBands.upperBand ? -1 : 0
+      bollinger: historicalPrices[0]?.close < bollingerBands.lowerBand ? 1 : historicalPrices[0]?.close > bollingerBands.upperBand ? -1 : 0
     };
 
     // Calculate final recommendation
