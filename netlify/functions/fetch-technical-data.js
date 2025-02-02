@@ -80,6 +80,29 @@ function getRecommendation(scores) {
   return 'Strong Sell';
 }
 
+// Calculate target price using a combination of indicators
+function calculateTargetPrice({ currentPrice, rsi, shortSMA, longSMA, macd, bollingerBands }) {
+  let targetPrice = currentPrice;
+
+  // RSI influence
+  if (rsi < 30) targetPrice += currentPrice * 0.05;  // Target a 5% increase if oversold
+  else if (rsi > 70) targetPrice -= currentPrice * 0.05;  // Target a 5% decrease if overbought
+
+  // Moving averages influence
+  if (shortSMA > longSMA) targetPrice += currentPrice * 0.03;  // Bullish crossover, target 3% increase
+  else if (shortSMA < longSMA) targetPrice -= currentPrice * 0.03;  // Bearish crossover, target 3% decrease
+
+  // Bollinger Bands influence
+  if (currentPrice < bollingerBands.lowerBand) targetPrice += currentPrice * 0.04;  // Move towards the mid-band
+  else if (currentPrice > bollingerBands.upperBand) targetPrice -= currentPrice * 0.04;
+
+  // MACD influence (bullish or bearish)
+  if (macd.macdLine > macd.macdSignalLine) targetPrice += currentPrice * 0.02;
+  else targetPrice -= currentPrice * 0.02;
+
+  return targetPrice;
+}
+
 exports.handler = async function (event, context) {
   const symbol = event.queryStringParameters.symbol || 'AAPL';
 
@@ -97,6 +120,8 @@ exports.handler = async function (event, context) {
 
     // Filter out any entries without valid 'close' prices
     const historicalPrices = data.historical.filter(day => day.close !== undefined && day.close !== null);
+    const currentPrice = historicalPrices[0]?.close;
+
     if (historicalPrices.length < 50) {
       throw new Error('Insufficient historical data for technical analysis');
     }
@@ -112,12 +137,22 @@ exports.handler = async function (event, context) {
     let scores = {
       rsi: rsi < 20 ? 2 : rsi < 30 ? 1 : rsi > 80 ? -2 : rsi > 70 ? -1 : 0,
       ma: shortSMA > longSMA ? 1 : shortSMA < longSMA ? -1 : 0,
-      macd: macd && macd.macdLine > macd.macdSignalLine ? 1 : -1,
-      bollinger: historicalPrices[0]?.close < bollingerBands.lowerBand ? 1 : historicalPrices[0]?.close > bollingerBands.upperBand ? -1 : 0
+      macd: macd.macdLine > macd.macdSignalLine ? 1 : -1,
+      bollinger: currentPrice < bollingerBands.lowerBand ? 1 : currentPrice > bollingerBands.upperBand ? -1 : 0
     };
 
     // Calculate final recommendation
     const finalRecommendation = getRecommendation(scores);
+
+    // Calculate target price
+    const targetPrice = calculateTargetPrice({
+      currentPrice,
+      rsi,
+      shortSMA,
+      longSMA,
+      macd,
+      bollingerBands
+    });
 
     // Get the origin from the incoming request
     const origin = event.headers.origin;
@@ -133,6 +168,8 @@ exports.handler = async function (event, context) {
       },
       body: JSON.stringify({
         symbol,
+        currentPrice: currentPrice.toFixed(2),
+        targetPrice: targetPrice.toFixed(2),
         rsi: rsi?.toFixed(2) || 'N/A',
         shortSMA: shortSMA?.toFixed(2) || 'N/A',
         longSMA: longSMA?.toFixed(2) || 'N/A',
