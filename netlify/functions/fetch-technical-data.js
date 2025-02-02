@@ -3,7 +3,7 @@ const fetch = require('node-fetch');
 // Helper function: Calculate Simple Moving Average (SMA)
 function calculateSMA(data, period) {
   if (data.length < period) return null;
-  const sum = data.slice(0, period).reduce((acc, day) => acc + day.close, 0);
+  const sum = data.slice(0, period).reduce((acc, day) => acc + (day.close || 0), 0);
   return sum / period;
 }
 
@@ -13,7 +13,7 @@ function calculateRSI(data, period = 14) {
   let gains = 0, losses = 0;
 
   for (let i = 1; i < period + 1; i++) {
-    const change = data[i - 1].close - data[i].close;
+    const change = (data[i - 1].close || 0) - (data[i].close || 0);
     if (change > 0) gains += change;
     else losses -= change;
   }
@@ -42,10 +42,10 @@ function calculateMACD(data, shortPeriod = 12, longPeriod = 26, signalPeriod = 9
 // Helper function: Calculate EMA
 function calculateEMA(data, period) {
   const smoothingFactor = 2 / (period + 1);
-  let ema = data[0].close; // Initial EMA is the first price
+  let ema = data[0].close || 0; // Initial EMA is the first price
 
   for (let i = 1; i < period; i++) {
-    ema = (data[i].close - ema) * smoothingFactor + ema;
+    ema = ((data[i].close || 0) - ema) * smoothingFactor + ema;
   }
   return ema;
 }
@@ -55,7 +55,7 @@ function calculateBollingerBands(data, period = 20) {
   if (data.length < period) return null;
 
   const sma = calculateSMA(data, period);
-  const variance = data.slice(0, period).reduce((acc, day) => acc + Math.pow(day.close - sma, 2), 0) / period;
+  const variance = data.slice(0, period).reduce((acc, day) => acc + Math.pow((day.close || 0) - sma, 2), 0) / period;
   const stdDev = Math.sqrt(variance);
 
   return {
@@ -67,7 +67,7 @@ function calculateBollingerBands(data, period = 20) {
 // Final recommendation based on weighted scores
 function getRecommendation(scores) {
   const totalScore = scores.rsi + scores.ma + scores.macd + scores.bollinger;
-  
+
   if (totalScore >= 3) return 'Strong Buy';
   if (totalScore >= 1) return 'Buy';
   if (totalScore === 0) return 'Hold';
@@ -84,11 +84,16 @@ exports.handler = async function (event, context) {
   try {
     const response = await fetch(historicalDataUrl);
     if (!response.ok) throw new Error('Failed to fetch historical data');
-    
-    const data = await response.json();
-    if (!data || !data.historical) throw new Error('No historical data available');
 
-    const historicalPrices = data.historical;
+    const data = await response.json();
+    if (!data || !data.historical || data.historical.length === 0) {
+      throw new Error('No historical data available');
+    }
+
+    const historicalPrices = data.historical.filter(day => day.close !== undefined && day.close !== null);
+    if (historicalPrices.length < 50) {
+      throw new Error('Insufficient historical data for technical analysis');
+    }
 
     // Calculate indicators
     const rsi = calculateRSI(historicalPrices, 14);
@@ -113,11 +118,11 @@ exports.handler = async function (event, context) {
       statusCode: 200,
       body: JSON.stringify({
         symbol,
-        rsi: rsi.toFixed(2),
-        shortSMA: shortSMA.toFixed(2),
-        longSMA: longSMA.toFixed(2),
-        macd: macd,
-        bollingerBands,
+        rsi: rsi?.toFixed(2) || 'N/A',
+        shortSMA: shortSMA?.toFixed(2) || 'N/A',
+        longSMA: longSMA?.toFixed(2) || 'N/A',
+        macd: macd || 'N/A',
+        bollingerBands: bollingerBands || 'N/A',
         finalRecommendation
       })
     };
