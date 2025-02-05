@@ -23,7 +23,7 @@ const db = admin.firestore();
 
 exports.handler = async (event) => {
   const { symbol } = event.queryStringParameters;
-  const corsHeader = event.headers.origin || 'https://amldash.webflow.io'; 
+  const corsHeader = event.headers.origin || 'https://amldash.webflow.io';
 
   if (!symbol) {
     return {
@@ -95,20 +95,29 @@ async function fetchData(symbol, apiKey) {
   ]);
 
   return {
-    companyOutlook: outlookRes,
+    companyOutlook: outlookRes || {},
     esgData: esgRes[0] || {},
-    technicalIndicators: techRes.slice(0, 30),
+    technicalIndicators: Array.isArray(techRes) && techRes.length > 0 ? techRes.slice(0, 30) : [],
     currentPrice: quoteRes[0]?.price || 0,
   };
 }
 
 function createAIPrompt(data) {
   const { companyOutlook, esgData, technicalIndicators, currentPrice } = data;
+
+  const esgDescription = esgData.environmentalScore
+    ? `ESG scores available with environmental: ${esgData.environmentalScore}, social: ${esgData.socialScore}, governance: ${esgData.governanceScore}`
+    : "No recent ESG data available.";
+
+  const technicalDescription = technicalIndicators.length > 0
+    ? JSON.stringify(technicalIndicators)
+    : "No recent technical indicators available.";
+
   return `
-    Analyze the following stock (${companyOutlook.symbol}) using recent data:
-    - ESG Data: ${JSON.stringify(esgData)}
+    Analyze the following stock (${companyOutlook.symbol || "Unknown Symbol"}) using recent data:
+    - ESG Data: ${esgDescription}
     - Current Price: $${currentPrice}
-    - Recent Technical Indicators: ${JSON.stringify(technicalIndicators)}
+    - Recent Technical Indicators: ${technicalDescription}
     
     Provide target prices for **1W** and **1M**, confidence scores, a short explanation, and a recommendation (Strong Buy, Buy, Hold, Sell, or Strong Sell).
 
@@ -121,7 +130,7 @@ function createAIPrompt(data) {
 }
 
 async function callOpenAI(prompt) {
-  const response = await fetch('https://api.openai.com/v1/completions', {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -129,12 +138,26 @@ async function callOpenAI(prompt) {
     },
     body: JSON.stringify({
       model: 'gpt-4o-mini',
-      prompt,
+      messages: [{ role: 'user', content: prompt }],
       max_tokens: 500,
       temperature: 0.7,
     }),
   });
 
+  if (!response.ok) {
+    throw new Error(`OpenAI API Error: ${response.statusText}`);
+  }
+
   const responseData = await response.json();
-  return JSON.parse(responseData.choices[0].text.trim());
+  const aiContent = responseData.choices[0]?.message?.content?.trim();
+
+  if (!aiContent) {
+    throw new Error("Invalid or empty response from OpenAI.");
+  }
+
+  try {
+    return JSON.parse(aiContent);
+  } catch (error) {
+    throw new Error("Failed to parse AI response as valid JSON.");
+  }
 }
