@@ -1,7 +1,6 @@
 const fetch = require('node-fetch');
 const admin = require('firebase-admin');
 
-// Initialize Firebase Admin SDK
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert({
@@ -34,7 +33,6 @@ exports.handler = async (event) => {
   }
 
   try {
-    console.log(`Processing AI prediction for: ${symbol.toUpperCase()}`);
     const symbolUpper = symbol.toUpperCase();
     const docRef = db.collection('aiPredictions').doc(symbolUpper);
     const docSnap = await docRef.get();
@@ -46,7 +44,6 @@ exports.handler = async (event) => {
       const hoursElapsed = (now.toDate() - lastFetched.toDate()) / (1000 * 60 * 60);
 
       if (hoursElapsed < 24) {
-        console.log(`Returning cached data for symbol: ${symbolUpper}`);
         return {
           statusCode: 200,
           headers: { 'Access-Control-Allow-Origin': corsHeader },
@@ -72,7 +69,6 @@ exports.handler = async (event) => {
       body: JSON.stringify(aiPrediction),
     };
   } catch (error) {
-    console.error('Error:', error);
     return {
       statusCode: 500,
       headers: { 'Access-Control-Allow-Origin': corsHeader },
@@ -114,14 +110,13 @@ function createAIPrompt(data) {
     : "No recent technical indicators available.";
 
   return `
-    Analyze the following stock (${companyOutlook.symbol || "Unknown Symbol"}) using recent data:
+    Provide target prices for 1W and 1M based on the following stock data:
+    - Symbol: ${companyOutlook.symbol || "Unknown Symbol"}
     - ESG Data: ${esgDescription}
     - Current Price: $${currentPrice}
     - Recent Technical Indicators: ${technicalDescription}
-    
-    Provide target prices for **1W** and **1M**, confidence scores, a short explanation, and a recommendation (Strong Buy, Buy, Hold, Sell, or Strong Sell).
 
-    Format:
+    The response should strictly follow this JSON format:
     {
       "1W": { "target_price": 0, "confidence_score": 0, "explanation": "Short explanation", "recommendation": "Buy" },
       "1M": { "target_price": 0, "confidence_score": 0, "explanation": "Short explanation", "recommendation": "Hold" }
@@ -155,8 +150,14 @@ async function callOpenAI(prompt) {
     throw new Error("Invalid or empty response from OpenAI.");
   }
 
+  // Extract JSON from the response using regex
+  const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error("No valid JSON found in AI response.");
+  }
+
   try {
-    return JSON.parse(aiContent);
+    return JSON.parse(jsonMatch[0]);
   } catch (error) {
     throw new Error("Failed to parse AI response as valid JSON.");
   }
