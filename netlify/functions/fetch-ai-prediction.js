@@ -53,20 +53,25 @@ exports.handler = async (event) => {
     }
 
     const fmpApiKey = process.env.FMP_API_KEY;
-    const companyOutlookData = await fetchData(symbolUpper, fmpApiKey);
-    const prompt = createAIPrompt(companyOutlookData);
+    const fetchedData = await fetchData(symbolUpper, fmpApiKey);
+    const prompt = createAIPrompt(fetchedData);
 
     const aiPrediction = await callOpenAI(prompt);
+
     await docRef.set({
       symbol: symbolUpper,
       recommendation: aiPrediction,
+      fetchedData,
       lastFetched: now,
     });
 
     return {
       statusCode: 200,
       headers: { 'Access-Control-Allow-Origin': corsHeader },
-      body: JSON.stringify(aiPrediction),
+      body: JSON.stringify({
+        recommendation: aiPrediction,
+        fetchedData,
+      }),
     };
   } catch (error) {
     return {
@@ -80,46 +85,63 @@ exports.handler = async (event) => {
 async function fetchData(symbol, apiKey) {
   const companyOutlookUrl = `https://financialmodelingprep.com/api/v4/company-outlook?symbol=${symbol}&apikey=${apiKey}`;
   const esgUrl = `https://financialmodelingprep.com/api/v4/esg-environmental-social-governance-data?symbol=${symbol}&year=${new Date().getFullYear()}&apikey=${apiKey}`;
-  const technicalIndicatorsUrl = `https://financialmodelingprep.com/api/v3/technical_indicator/daily/${symbol}?period=14&type=rsi&apikey=${apiKey}`;
+  const sentimentUrl = `https://financialmodelingprep.com/api/v4/stock-news-sentiment?symbol=${symbol}&apikey=${apiKey}`;
+
+  const today = new Date();
+  const oneWeekAgo = new Date();
+  const oneMonthAgo = new Date();
+  oneWeekAgo.setDate(today.getDate() - 7);
+  oneMonthAgo.setDate(today.getDate() - 30);
+
+  const formatDate = (date) => date.toISOString().split('T')[0];
+
+  const technical1WUrl = `https://financialmodelingprep.com/api/v3/technical_indicator/daily/${symbol}?from=${formatDate(oneWeekAgo)}&to=${formatDate(today)}&period=14&type=rsi&apikey=${apiKey}`;
+  const technical1MUrl = `https://financialmodelingprep.com/api/v3/technical_indicator/daily/${symbol}?from=${formatDate(oneMonthAgo)}&to=${formatDate(today)}&period=14&type=rsi&apikey=${apiKey}`;
   const quoteUrl = `https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${apiKey}`;
 
-  const [outlookRes, esgRes, techRes, quoteRes] = await Promise.all([
+  const [outlookRes, esgRes, sentimentRes, tech1WRes, tech1MRes, quoteRes] = await Promise.all([
     fetch(companyOutlookUrl).then((res) => res.json()),
     fetch(esgUrl).then((res) => res.json()),
-    fetch(technicalIndicatorsUrl).then((res) => res.json()),
+    fetch(sentimentUrl).then((res) => res.json()),
+    fetch(technical1WUrl).then((res) => res.json()),
+    fetch(technical1MUrl).then((res) => res.json()),
     fetch(quoteUrl).then((res) => res.json()),
   ]);
+
+  const sentimentSummary = sentimentRes.sentiment ? `Positive: ${sentimentRes.sentiment.positive}, Negative: ${sentimentRes.sentiment.negative}` : "No recent news sentiment available.";
 
   return {
     companyOutlook: outlookRes || {},
     esgData: esgRes[0] || {},
-    technicalIndicators: Array.isArray(techRes) && techRes.length > 0 ? techRes.slice(0, 30) : [],
+    sentimentSummary,
+    technical1W: tech1WRes.length > 0 ? tech1WRes : [],
+    technical1M: tech1MRes.length > 0 ? tech1MRes : [],
     currentPrice: quoteRes[0]?.price || 0,
   };
 }
 
 function createAIPrompt(data) {
-  const { companyOutlook, esgData, technicalIndicators, currentPrice } = data;
+  const { companyOutlook, esgData, sentimentSummary, technical1W, technical1M, currentPrice } = data;
 
-  const esgDescription = esgData.environmentalScore
-    ? `ESG scores available with environmental: ${esgData.environmentalScore}, social: ${esgData.socialScore}, governance: ${esgData.governanceScore}`
-    : "No recent ESG data available.";
-
-  const technicalDescription = technicalIndicators.length > 0
-    ? JSON.stringify(technicalIndicators)
-    : "No recent technical indicators available.";
+  const esgRisk = esgData.overallScore >= 70 ? "Low" : esgData.overallScore >= 40 ? "Moderate" : "High";
 
   return `
-    Provide target prices for 1W and 1M based on the following stock data:
-    - Symbol: ${companyOutlook.symbol || "Unknown Symbol"}
-    - ESG Data: ${esgDescription}
+    Analyze the following stock (${companyOutlook.symbol || "Unknown Symbol"}) using recent data:
+    - ESG Data: ${esgData.overallScore ? `Overall ESG Score: ${esgData.overallScore}, Risk: ${esgRisk}` : "No recent ESG data available."}
     - Current Price: $${currentPrice}
-    - Recent Technical Indicators: ${technicalDescription}
+    - Technical Indicators (1 Week): ${technical1W.length > 0 ? JSON.stringify(technical1W.slice(0, 5)) : "No recent technical data available."}
+    - Technical Indicators (1 Month): ${technical1M.length > 0 ? JSON.stringify(technical1M.slice(0, 5)) : "No recent technical data available."}
+    - News Sentiment: ${sentimentSummary}
 
-    The response should strictly follow this JSON format:
+    Provide target prices for **1W** and **1M** and include:
+    - Risk assessment (Low/Moderate/High)
+    - Confidence score
+    - Recommendation (Strong Buy, Buy, Hold, Sell, Strong Sell)
+
+    Respond in this JSON format:
     {
-      "1W": { "target_price": 0, "confidence_score": 0, "explanation": "Short explanation", "recommendation": "Buy" },
-      "1M": { "target_price": 0, "confidence_score": 0, "explanation": "Short explanation", "recommendation": "Hold" }
+      "1W": { "target_price": 0, "confidence_score": 0, "explanation": "Short explanation with mention of news, technicals, or ESG.", "risk_assessment": "Low/Moderate/High", "recommendation": "Buy" },
+      "1M": { "target_price": 0, "confidence_score": 0, "explanation": "Short explanation with mention of news, technicals, or ESG.", "risk_assessment": "Low/Moderate/High", "recommendation": "Hold" }
     }
   `;
 }
@@ -150,7 +172,6 @@ async function callOpenAI(prompt) {
     throw new Error("Invalid or empty response from OpenAI.");
   }
 
-  // Extract JSON from the response using regex
   const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     throw new Error("No valid JSON found in AI response.");
