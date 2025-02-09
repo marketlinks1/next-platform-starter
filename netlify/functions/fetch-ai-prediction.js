@@ -83,67 +83,69 @@ exports.handler = async (event) => {
 };
 
 async function fetchData(symbol, apiKey) {
-  const companyOutlookUrl = `https://financialmodelingprep.com/api/v4/company-outlook?symbol=${symbol}&apikey=${apiKey}`;
-  const esgUrl = `https://financialmodelingprep.com/api/v4/esg-environmental-social-governance-data?symbol=${symbol}&year=${new Date().getFullYear()}&apikey=${apiKey}`;
-  const sentimentUrl = `https://financialmodelingprep.com/api/v4/stock-news-sentiment?symbol=${symbol}&apikey=${apiKey}`;
-
   const today = new Date();
   const oneWeekAgo = new Date();
-  const oneMonthAgo = new Date();
   oneWeekAgo.setDate(today.getDate() - 7);
-  oneMonthAgo.setDate(today.getDate() - 30);
-
+  
   const formatDate = (date) => date.toISOString().split('T')[0];
 
-  const technical1WUrl = `https://financialmodelingprep.com/api/v3/technical_indicator/daily/${symbol}?from=${formatDate(oneWeekAgo)}&to=${formatDate(today)}&period=14&type=rsi&apikey=${apiKey}`;
-  const technical1MUrl = `https://financialmodelingprep.com/api/v3/technical_indicator/daily/${symbol}?from=${formatDate(oneMonthAgo)}&to=${formatDate(today)}&period=14&type=rsi&apikey=${apiKey}`;
+  const companyOutlookUrl = `https://financialmodelingprep.com/api/v4/company-outlook?symbol=${symbol}&apikey=${apiKey}`;
+  const esgUrl = `https://financialmodelingprep.com/api/v4/esg-environmental-social-governance-data?symbol=${symbol}&year=${today.getFullYear()}&apikey=${apiKey}`;
+  const newsUrl = `https://financialmodelingprep.com/stable/news/stock?symbols=${symbol}&from=${formatDate(oneWeekAgo)}&to=${formatDate(today)}&apikey=${apiKey}`;
   const quoteUrl = `https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${apiKey}`;
 
-  const [outlookRes, esgRes, sentimentRes, tech1WRes, tech1MRes, quoteRes] = await Promise.all([
-    fetch(companyOutlookUrl).then((res) => res.json()),
-    fetch(esgUrl).then((res) => res.json()),
-    fetch(sentimentUrl).then((res) => res.json()),
-    fetch(technical1WUrl).then((res) => res.json()),
-    fetch(technical1MUrl).then((res) => res.json()),
-    fetch(quoteUrl).then((res) => res.json()),
+  const [outlookRes, esgRes, newsRes, quoteRes] = await Promise.all([
+    fetch(companyOutlookUrl).then(res => res.json()),
+    fetch(esgUrl).then(res => res.json()),
+    fetch(newsUrl).then(res => res.json()),
+    fetch(quoteUrl).then(res => res.json())
   ]);
 
-  const sentimentSummary = sentimentRes.sentiment ? `Positive: ${sentimentRes.sentiment.positive}, Negative: ${sentimentRes.sentiment.negative}` : "No recent news sentiment available.";
+  const aiGeneratedNewsSummary = await processNewsWithAI(newsRes);
 
   return {
     companyOutlook: outlookRes || {},
     esgData: esgRes[0] || {},
-    sentimentSummary,
-    technical1W: tech1WRes.length > 0 ? tech1WRes : [],
-    technical1M: tech1MRes.length > 0 ? tech1MRes : [],
+    newsSummary: aiGeneratedNewsSummary,
     currentPrice: quoteRes[0]?.price || 0,
   };
 }
 
-function createAIPrompt(data) {
-  const { companyOutlook, esgData, sentimentSummary, technical1W, technical1M, currentPrice } = data;
+async function processNewsWithAI(newsData) {
+  // Step 1: Deduplicate articles by title similarity
+  const deduplicated = deduplicateArticles(newsData);
 
-  const esgRisk = esgData.overallScore >= 70 ? "Low" : esgData.overallScore >= 40 ? "Moderate" : "High";
+  // Step 2: Create a prompt for the AI to analyze the news
+  const aiPrompt = generateNewsSentimentPrompt(deduplicated);
 
-  return `
-    Analyze the following stock (${companyOutlook.symbol || "Unknown Symbol"}) using recent data:
-    - ESG Data: ${esgData.overallScore ? `Overall ESG Score: ${esgData.overallScore}, Risk: ${esgRisk}` : "No recent ESG data available."}
-    - Current Price: $${currentPrice}
-    - Technical Indicators (1 Week): ${technical1W.length > 0 ? JSON.stringify(technical1W.slice(0, 5)) : "No recent technical data available."}
-    - Technical Indicators (1 Month): ${technical1M.length > 0 ? JSON.stringify(technical1M.slice(0, 5)) : "No recent technical data available."}
-    - News Sentiment: ${sentimentSummary}
+  // Step 3: Call the AI to get sentiment and summary
+  const aiSentimentResponse = await callOpenAI(aiPrompt);
 
-    Provide target prices for **1W** and **1M** and include:
-    - Risk assessment (Low/Moderate/High)
-    - Confidence score
-    - Recommendation (Strong Buy, Buy, Hold, Sell, Strong Sell)
+  return aiSentimentResponse;
+}
 
-    Respond in this JSON format:
-    {
-      "1W": { "target_price": 0, "confidence_score": 0, "explanation": "Short explanation with mention of news, technicals, or ESG.", "risk_assessment": "Low/Moderate/High", "recommendation": "Buy" },
-      "1M": { "target_price": 0, "confidence_score": 0, "explanation": "Short explanation with mention of news, technicals, or ESG.", "risk_assessment": "Low/Moderate/High", "recommendation": "Hold" }
+function deduplicateArticles(articles) {
+  const uniqueArticles = [];
+  const seenTitles = new Set();
+
+  articles.forEach(article => {
+    const title = article.title.toLowerCase();
+    if (![...seenTitles].some(existingTitle => similarity(title, existingTitle) > 0.85)) {
+      uniqueArticles.push(article);
+      seenTitles.add(title);
     }
-  `;
+  });
+
+  return uniqueArticles;
+}
+
+function generateNewsSentimentPrompt(articles) {
+  let prompt = "Analyze the following news articles and generate sentiment scores and explanations:\n\n";
+  articles.forEach((article, index) => {
+    prompt += `${index + 1}. "${article.title}" - ${article.text}\n`;
+  });
+  prompt += "\nFor each article, provide:\n- Sentiment: Positive, Neutral, or Negative\n- Sentiment Score (0-100)\n- Short explanation of the sentiment.";
+  return prompt;
 }
 
 async function callOpenAI(prompt) {
@@ -156,7 +158,7 @@ async function callOpenAI(prompt) {
     body: JSON.stringify({
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 500,
+      max_tokens: 1000,
       temperature: 0.7,
     }),
   });
@@ -177,9 +179,29 @@ async function callOpenAI(prompt) {
     throw new Error("No valid JSON found in AI response.");
   }
 
-  try {
-    return JSON.parse(jsonMatch[0]);
-  } catch (error) {
-    throw new Error("Failed to parse AI response as valid JSON.");
-  }
+  return JSON.parse(jsonMatch[0]);
+}
+
+function createAIPrompt(data) {
+  const { companyOutlook, esgData, newsSummary, currentPrice } = data;
+
+  const esgRisk = esgData.overallScore >= 70 ? "Low" : esgData.overallScore >= 40 ? "Moderate" : "High";
+
+  return `
+    Analyze the following stock (${companyOutlook.symbol || "Unknown Symbol"}) using recent data:
+    - ESG Data: ${esgData.overallScore ? `Overall ESG Score: ${esgData.overallScore}, Risk: ${esgRisk}` : "No recent ESG data available."}
+    - Current Price: $${currentPrice}
+    - News Sentiment Summary: ${JSON.stringify(newsSummary)}
+
+    Provide target prices for **1W** and **1M** and include:
+    - Risk assessment (Low/Moderate/High)
+    - Confidence score
+    - Recommendation (Strong Buy, Buy, Hold, Sell, Strong Sell)
+
+    Respond in this JSON format:
+    {
+      "1W": { "target_price": 0, "confidence_score": 0, "explanation": "Short explanation.", "risk_assessment": "Low/Moderate/High", "recommendation": "Buy" },
+      "1M": { "target_price": 0, "confidence_score": 0, "explanation": "Short explanation.", "risk_assessment": "Low/Moderate/High", "recommendation": "Hold" }
+    }
+  `;
 }
