@@ -91,7 +91,7 @@ async function fetchData(symbol, apiKey) {
 
   const companyOutlookUrl = `https://financialmodelingprep.com/api/v4/company-outlook?symbol=${symbol}&apikey=${apiKey}`;
   const esgUrl = `https://financialmodelingprep.com/api/v4/esg-environmental-social-governance-data?symbol=${symbol}&year=${today.getFullYear()}&apikey=${apiKey}`;
-  const newsUrl = `https://financialmodelingprep.com/stable/news/stock?symbols=${symbol}&from=${formatDate(oneWeekAgo)}&to=${formatDate(today)}&apikey=${apiKey}`;
+  const newsUrl = `https://financialmodelingprep.com/stable/news/stock?symbols=${symbol}&from=${formatDate(oneWeekAgo)}&to=${formatDate(today)}&limit=10&apikey=${apiKey}`;  // Limit to 10 articles
   const quoteUrl = `https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${apiKey}`;
 
   const [outlookRes, esgRes, newsRes, quoteRes] = await Promise.all([
@@ -112,16 +112,20 @@ async function fetchData(symbol, apiKey) {
 }
 
 async function processNewsWithAI(newsData) {
-  // Step 1: Deduplicate articles by title similarity
+  // Deduplicate articles by title similarity
   const deduplicated = deduplicateArticles(newsData);
 
-  // Step 2: Create a prompt for the AI to analyze the news
-  const aiPrompt = generateNewsSentimentPrompt(deduplicated);
+  // Batch articles for AI processing (5 articles per batch)
+  const batches = createBatches(deduplicated, 5);
+  const results = [];
 
-  // Step 3: Call the AI to get sentiment and summary
-  const aiSentimentResponse = await callOpenAI(aiPrompt);
+  for (const batch of batches) {
+    const aiPrompt = generateNewsSentimentPrompt(batch);
+    const sentimentResponse = await callOpenAI(aiPrompt);
+    results.push(sentimentResponse);
+  }
 
-  return aiSentimentResponse;
+  return results;
 }
 
 function deduplicateArticles(articles) {
@@ -140,7 +144,6 @@ function deduplicateArticles(articles) {
 }
 
 function similarity(s1, s2) {
-  // Levenshtein distance implementation
   const len1 = s1.length;
   const len2 = s2.length;
   const dp = Array.from({ length: len1 + 1 }, () => Array(len2 + 1).fill(0));
@@ -156,7 +159,15 @@ function similarity(s1, s2) {
 
   const distance = dp[len1][len2];
   const maxLen = Math.max(len1, len2);
-  return 1 - distance / maxLen;  // Return a similarity score between 0 and 1
+  return 1 - distance / maxLen;  // Return similarity score between 0 and 1
+}
+
+function createBatches(array, batchSize) {
+  const batches = [];
+  for (let i = 0; i < array.length; i += batchSize) {
+    batches.push(array.slice(i, i + batchSize));
+  }
+  return batches;
 }
 
 function generateNewsSentimentPrompt(articles) {
@@ -164,7 +175,7 @@ function generateNewsSentimentPrompt(articles) {
   articles.forEach((article, index) => {
     prompt += `${index + 1}. "${article.title}" - ${article.text}\n`;
   });
-  prompt += "\nFor each article, provide:\n- Sentiment: Positive, Neutral, or Negative\n- Sentiment Score (0-100)\n- Short explanation of the sentiment.";
+  prompt += "\nProvide sentiment analysis for each article.";
   return prompt;
 }
 
@@ -200,28 +211,4 @@ async function callOpenAI(prompt) {
   }
 
   return JSON.parse(jsonMatch[0]);
-}
-
-function createAIPrompt(data) {
-  const { companyOutlook, esgData, newsSummary, currentPrice } = data;
-
-  const esgRisk = esgData.overallScore >= 70 ? "Low" : esgData.overallScore >= 40 ? "Moderate" : "High";
-
-  return `
-    Analyze the following stock (${companyOutlook.symbol || "Unknown Symbol"}) using recent data:
-    - ESG Data: ${esgData.overallScore ? `Overall ESG Score: ${esgData.overallScore}, Risk: ${esgRisk}` : "No recent ESG data available."}
-    - Current Price: $${currentPrice}
-    - News Sentiment Summary: ${JSON.stringify(newsSummary)}
-
-    Provide target prices for **1W** and **1M** and include:
-    - Risk assessment (Low/Moderate/High)
-    - Confidence score
-    - Recommendation (Strong Buy, Buy, Hold, Sell, Strong Sell)
-
-    Respond in this JSON format:
-    {
-      "1W": { "target_price": 0, "confidence_score": 0, "explanation": "Short explanation.", "risk_assessment": "Low/Moderate/High", "recommendation": "Buy" },
-      "1M": { "target_price": 0, "confidence_score": 0, "explanation": "Short explanation.", "risk_assessment": "Low/Moderate/High", "recommendation": "Hold" }
-    }
-  `;
 }
