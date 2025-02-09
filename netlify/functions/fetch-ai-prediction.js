@@ -139,6 +139,26 @@ function deduplicateArticles(articles) {
   return uniqueArticles;
 }
 
+function similarity(s1, s2) {
+  // Levenshtein distance implementation
+  const len1 = s1.length;
+  const len2 = s2.length;
+  const dp = Array.from({ length: len1 + 1 }, () => Array(len2 + 1).fill(0));
+
+  for (let i = 0; i <= len1; i++) {
+    for (let j = 0; j <= len2; j++) {
+      if (i === 0) dp[i][j] = j;
+      else if (j === 0) dp[i][j] = i;
+      else if (s1[i - 1] === s2[j - 1]) dp[i][j] = dp[i - 1][j - 1];
+      else dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+
+  const distance = dp[len1][len2];
+  const maxLen = Math.max(len1, len2);
+  return 1 - distance / maxLen;  // Return a similarity score between 0 and 1
+}
+
 function generateNewsSentimentPrompt(articles) {
   let prompt = "Analyze the following news articles and generate sentiment scores and explanations:\n\n";
   articles.forEach((article, index) => {
