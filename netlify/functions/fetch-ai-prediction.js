@@ -1,6 +1,7 @@
 const fetch = require('node-fetch');
 const admin = require('firebase-admin');
 
+// Initialize Firebase only once
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert({
@@ -21,150 +22,162 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 exports.handler = async (event) => {
-  const { symbol } = event.queryStringParameters;
   const corsHeader = event.headers.origin || 'https://amldash.webflow.io';
 
-  if (!symbol) {
+  // Handle preflight CORS requests
+  if (event.httpMethod === 'OPTIONS') {
     return {
-      statusCode: 400,
-      headers: { 'Access-Control-Allow-Origin': corsHeader },
-      body: JSON.stringify({ error: 'Symbol is required' }),
+      statusCode: 204,
+      headers: {
+        'Access-Control-Allow-Origin': corsHeader,
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      },
+      body: '',
     };
+  }
+
+  const { symbol } = event.queryStringParameters || {};
+  if (!symbol) {
+    return createResponse(400, corsHeader, { error: 'Symbol is required.' });
   }
 
   try {
-    const symbolUpper = symbol.toUpperCase();
-    const docRef = db.collection('aiPredictions').doc(symbolUpper);
+    const upperSymbol = symbol.toUpperCase();
+    const docRef = db.collection('aiPredictions').doc(upperSymbol);
     const docSnap = await docRef.get();
     const now = admin.firestore.Timestamp.now();
 
+    // If prediction exists and is less than 24 hours old, return cached result
     if (docSnap.exists) {
-      const data = docSnap.data();
-      const lastFetched = data.lastFetched;
+      const { lastFetched, recommendation } = docSnap.data();
       const hoursElapsed = (now.toDate() - lastFetched.toDate()) / (1000 * 60 * 60);
-
       if (hoursElapsed < 24) {
-        return {
-          statusCode: 200,
-          headers: { 'Access-Control-Allow-Origin': corsHeader },
-          body: JSON.stringify(data),
-        };
+        return createResponse(200, corsHeader, { recommendation });
       }
     }
 
-    const fmpApiKey = process.env.FMP_API_KEY;
-    const fetchedData = await fetchData(symbolUpper, fmpApiKey);
-    const prompt = createAIPrompt(fetchedData);
-
+    // Fetch new data and generate prediction
+    const fetchedData = await fetchData(upperSymbol);
+    const prompt = createAIPrompt(fetchedData, upperSymbol);
     const aiPrediction = await callOpenAI(prompt);
 
-    await docRef.set({
-      symbol: symbolUpper,
-      recommendation: aiPrediction,
-      fetchedData,
-      lastFetched: now,
-    });
+    // Save to Firestore
+    await docRef.set({ symbol: upperSymbol, recommendation: aiPrediction, fetchedData, lastFetched: now });
 
-    return {
-      statusCode: 200,
-      headers: { 'Access-Control-Allow-Origin': corsHeader },
-      body: JSON.stringify({
-        recommendation: aiPrediction,
-        fetchedData,
-      }),
-    };
+    return createResponse(200, corsHeader, { recommendation: aiPrediction, fetchedData });
   } catch (error) {
-    return {
-      statusCode: 500,
-      headers: { 'Access-Control-Allow-Origin': corsHeader },
-      body: JSON.stringify({ error: error.message }),
-    };
+    console.error('Error:', error.message);
+    return createResponse(500, corsHeader, { error: error.message });
   }
 };
 
-async function fetchData(symbol, apiKey) {
-  const today = new Date();
-  const oneWeekAgo = new Date();
-  oneWeekAgo.setDate(today.getDate() - 7);
-  
-  const formatDate = (date) => date.toISOString().split('T')[0];
-
-  const newsUrl = `https://financialmodelingprep.com/stable/news/stock?symbols=${symbol}&from=${formatDate(oneWeekAgo)}&to=${formatDate(today)}&limit=10&apikey=${apiKey}`;
-
-  const newsRes = await fetch(newsUrl).then(res => res.json());
-
-  const aiGeneratedNewsSummary = await processNewsWithAI(newsRes);
-
+// Helper: Create JSON response
+function createResponse(statusCode, corsHeader, body) {
   return {
-    newsSummary: aiGeneratedNewsSummary
+    statusCode,
+    headers: {
+      'Access-Control-Allow-Origin': corsHeader,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
   };
 }
 
-async function processNewsWithAI(newsData) {
-  const deduplicated = deduplicateArticles(newsData);
+// Fetch stock news and process with AI
+async function fetchData(symbol) {
+  const today = new Date();
+  const oneWeekAgo = new Date(today.setDate(today.getDate() - 7));
+  const formattedDate = (date) => date.toISOString().split('T')[0];
 
-  const aiPrompt = generateNewsSentimentPrompt(deduplicated);
+  const newsUrl = `https://financialmodelingprep.com/api/v3/stock_news?tickers=${symbol}&from=${formattedDate(oneWeekAgo)}&to=${formattedDate(new Date())}&limit=10&apikey=${process.env.FMP_API_KEY}`;
 
-  const sentimentResponse = await callOpenAI(aiPrompt);
+  const newsRes = await fetch(newsUrl);
+  if (!newsRes.ok) throw new Error('Failed to fetch news data.');
+  const newsData = await newsRes.json();
 
-  return sentimentResponse;
+  const processedNews = await processNewsWithAI(newsData);
+  return { newsSummary: processedNews };
 }
 
+// Process news data through OpenAI for sentiment
+async function processNewsWithAI(newsArticles) {
+  const deduplicated = deduplicateArticles(newsArticles);
+  const prompt = generateNewsSentimentPrompt(deduplicated);
+  return await callOpenAI(prompt);
+}
+
+// Deduplicate articles based on title similarity
 function deduplicateArticles(articles) {
-  const uniqueArticles = [];
-  const seenTitles = new Set();
+  const unique = [];
+  const titles = new Set();
 
-  articles.forEach(article => {
-    const title = article.title.toLowerCase();
-    if (![...seenTitles].some(existingTitle => similarity(title, existingTitle) > 0.85)) {
-      uniqueArticles.push(article);
-      seenTitles.add(title);
+  articles.forEach(({ title }) => {
+    const lowerTitle = title.toLowerCase();
+    if (![...titles].some((t) => similarity(lowerTitle, t) > 0.85)) {
+      unique.push({ title });
+      titles.add(lowerTitle);
     }
   });
 
-  return uniqueArticles;
+  return unique;
 }
 
-function similarity(s1, s2) {
-  const len1 = s1.length;
-  const len2 = s2.length;
-  const dp = Array.from({ length: len1 + 1 }, () => Array(len2 + 1).fill(0));
+// Similarity check using Levenshtein distance
+function similarity(a, b) {
+  const dp = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
 
-  for (let i = 0; i <= len1; i++) {
-    for (let j = 0; j <= len2; j++) {
-      if (i === 0) dp[i][j] = j;
-      else if (j === 0) dp[i][j] = i;
-      else if (s1[i - 1] === s2[j - 1]) dp[i][j] = dp[i - 1][j - 1];
-      else dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+  for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
     }
   }
 
-  const distance = dp[len1][len2];
-  const maxLen = Math.max(len1, len2);
-  return 1 - distance / maxLen;
+  return 1 - dp[a.length][b.length] / Math.max(a.length, b.length);
 }
 
+// Generate prompt for AI sentiment analysis
 function generateNewsSentimentPrompt(articles) {
-  let prompt = "Analyze the following news articles and respond ONLY in JSON format with sentiment scores and explanations:\n\n";
-  articles.forEach((article, index) => {
-    prompt += `${index + 1}. "${article.title}" - ${article.text}\n`;
-  });
-  prompt += `
-  Respond in JSON format like this:
-  {
-    "articles": [
-      {
-        "title": "Title of Article",
-        "sentiment": "Positive/Neutral/Negative",
-        "sentimentScore": 85,
-        "explanation": "Short explanation here"
-      }
-    ]
-  }
+  return `
+Analyze the sentiment of these news headlines. Respond in JSON format only:
+${articles.map((a, i) => `${i + 1}. "${a.title}"`).join('\n')}
+
+Response format:
+{
+  "articles": [
+    {
+      "title": "Example Title",
+      "sentiment": "Positive/Neutral/Negative",
+      "sentimentScore": 85,
+      "explanation": "Brief explanation."
+    }
+  ]
+}
   `;
-  return prompt;
 }
 
+// Create final AI prompt for recommendation
+function createAIPrompt(fetchedData, symbol) {
+  return `
+You are an AI stock advisor. Based on the news summary below for ${symbol}, give a final recommendation: BUY, SELL, or HOLD. Consider news sentiment and market trends.
+
+News Summary:
+${JSON.stringify(fetchedData.newsSummary, null, 2)}
+
+Response format:
+{
+  "recommendation": "BUY/SELL/HOLD",
+  "reason": "Short explanation."
+}
+  `;
+}
+
+// Call OpenAI API
 async function callOpenAI(prompt) {
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -175,32 +188,22 @@ async function callOpenAI(prompt) {
     body: JSON.stringify({
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 1000,
-      temperature: 0.7,
+      max_tokens: 800,
+      temperature: 0.5,
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`OpenAI API Error: ${response.statusText}`);
-  }
+  if (!response.ok) throw new Error(`OpenAI API Error: ${response.statusText}`);
 
-  const responseData = await response.json();
-  const aiContent = responseData.choices[0]?.message?.content?.trim();
+  const { choices } = await response.json();
+  const content = choices[0]?.message?.content?.trim();
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
 
-  if (!aiContent) {
-    throw new Error("Invalid or empty response from OpenAI.");
-  }
-
-  const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    console.error("AI response was not in valid JSON format:", aiContent);
-    throw new Error("No valid JSON found in AI response.");
-  }
+  if (!jsonMatch) throw new Error('Invalid AI response format.');
 
   try {
     return JSON.parse(jsonMatch[0]);
-  } catch (error) {
-    console.error("Failed to parse AI response JSON:", aiContent);
-    throw new Error("Failed to parse AI response as valid JSON.");
+  } catch {
+    throw new Error('Failed to parse AI response.');
   }
 }
