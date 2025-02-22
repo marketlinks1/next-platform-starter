@@ -48,7 +48,7 @@ exports.handler = async (event) => {
     const docSnap = await docRef.get();
     const now = admin.firestore.Timestamp.now();
 
-    // If prediction exists and is less than 24 hours old, return cached result
+    // Check Firestore for existing prediction (valid for 24 hours)
     if (docSnap.exists) {
       const { lastFetched, recommendation } = docSnap.data();
       const hoursElapsed = (now.toDate() - lastFetched.toDate()) / (1000 * 60 * 60);
@@ -57,13 +57,23 @@ exports.handler = async (event) => {
       }
     }
 
-    // Fetch new data and generate prediction
+    // Fetch fundamental and technical data
     const fetchedData = await fetchData(upperSymbol);
+    if (!fetchedData) {
+      throw new Error('Failed to fetch fundamental and technical data.');
+    }
+
+    // Generate AI prompt and get prediction
     const prompt = createAIPrompt(fetchedData, upperSymbol);
     const aiPrediction = await callOpenAI(prompt);
 
-    // Save to Firestore
-    await docRef.set({ symbol: upperSymbol, recommendation: aiPrediction, fetchedData, lastFetched: now });
+    // Save prediction to Firestore
+    await docRef.set({
+      symbol: upperSymbol,
+      recommendation: aiPrediction,
+      fetchedData,
+      lastFetched: now,
+    });
 
     return createResponse(200, corsHeader, { recommendation: aiPrediction, fetchedData });
   } catch (error) {
@@ -72,7 +82,7 @@ exports.handler = async (event) => {
   }
 };
 
-// Helper: Create JSON response
+// Create JSON response with CORS headers
 function createResponse(statusCode, corsHeader, body) {
   return {
     statusCode,
@@ -84,100 +94,65 @@ function createResponse(statusCode, corsHeader, body) {
   };
 }
 
-// Fetch stock news and process with AI
+// Fetch fundamental and technical data from FMP
 async function fetchData(symbol) {
-  const today = new Date();
-  const oneWeekAgo = new Date(today.setDate(today.getDate() - 7));
-  const formattedDate = (date) => date.toISOString().split('T')[0];
+  const apiKey = process.env.FMP_API_KEY;
 
-  const newsUrl = `https://financialmodelingprep.com/api/v3/stock_news?tickers=${symbol}&from=${formattedDate(oneWeekAgo)}&to=${formattedDate(new Date())}&limit=10&apikey=${process.env.FMP_API_KEY}`;
+  const endpoints = {
+    fundamentals: `https://financialmodelingprep.com/api/v3/income-statement/${symbol}?limit=1&apikey=${apiKey}`,
+    balanceSheet: `https://financialmodelingprep.com/api/v3/balance-sheet-statement/${symbol}?limit=1&apikey=${apiKey}`,
+    technicals: `https://financialmodelingprep.com/api/v3/technical_indicator/daily/${symbol}?period=14&type=rsi&apikey=${apiKey}`,
+  };
 
-  const newsRes = await fetch(newsUrl);
-  if (!newsRes.ok) throw new Error('Failed to fetch news data.');
-  const newsData = await newsRes.json();
+  try {
+    const [fundamentalsRes, balanceSheetRes, technicalsRes] = await Promise.all([
+      fetch(endpoints.fundamentals),
+      fetch(endpoints.balanceSheet),
+      fetch(endpoints.technicals),
+    ]);
 
-  const processedNews = await processNewsWithAI(newsData);
-  return { newsSummary: processedNews };
-}
-
-// Process news data through OpenAI for sentiment
-async function processNewsWithAI(newsArticles) {
-  const deduplicated = deduplicateArticles(newsArticles);
-  const prompt = generateNewsSentimentPrompt(deduplicated);
-  return await callOpenAI(prompt);
-}
-
-// Deduplicate articles based on title similarity
-function deduplicateArticles(articles) {
-  const unique = [];
-  const titles = new Set();
-
-  articles.forEach(({ title }) => {
-    const lowerTitle = title.toLowerCase();
-    if (![...titles].some((t) => similarity(lowerTitle, t) > 0.85)) {
-      unique.push({ title });
-      titles.add(lowerTitle);
+    if (!fundamentalsRes.ok || !balanceSheetRes.ok || !technicalsRes.ok) {
+      throw new Error('Failed to fetch one or more data endpoints.');
     }
-  });
 
-  return unique;
-}
+    const fundamentals = await fundamentalsRes.json();
+    const balanceSheet = await balanceSheetRes.json();
+    const technicals = await technicalsRes.json();
 
-// Similarity check using Levenshtein distance
-function similarity(a, b) {
-  const dp = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
-
-  for (let i = 0; i <= a.length; i++) dp[i][0] = i;
-  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
-
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-    }
+    return {
+      fundamentals: fundamentals[0],
+      balanceSheet: balanceSheet[0],
+      technicals: technicals[0],
+    };
+  } catch (error) {
+    console.error('Error fetching data:', error.message);
+    return null;
   }
-
-  return 1 - dp[a.length][b.length] / Math.max(a.length, b.length);
 }
 
-// Generate prompt for AI sentiment analysis
-function generateNewsSentimentPrompt(articles) {
+// Generate prompt for AI based on fetched data
+function createAIPrompt({ fundamentals, balanceSheet, technicals }, symbol) {
   return `
-Analyze the sentiment of these news headlines. Respond in JSON format only:
-${articles.map((a, i) => `${i + 1}. "${a.title}"`).join('\n')}
+You are an AI financial analyst. Based on the following data for ${symbol}, provide a recommendation: BUY, SELL, or HOLD. Consider the company's fundamentals, balance sheet, and technical indicators.
 
-Response format:
-{
-  "articles": [
-    {
-      "title": "Example Title",
-      "sentiment": "Positive/Neutral/Negative",
-      "sentimentScore": 85,
-      "explanation": "Brief explanation."
-    }
-  ]
-}
-  `;
-}
+Fundamentals:
+${JSON.stringify(fundamentals, null, 2)}
 
-// Create final AI prompt for recommendation
-function createAIPrompt(fetchedData, symbol) {
-  return `
-You are an AI stock advisor. Based on the news summary below for ${symbol}, give a final recommendation: BUY, SELL, or HOLD. Consider news sentiment and market trends.
+Balance Sheet:
+${JSON.stringify(balanceSheet, null, 2)}
 
-News Summary:
-${JSON.stringify(fetchedData.newsSummary, null, 2)}
+Technicals:
+${JSON.stringify(technicals, null, 2)}
 
-Response format:
+Respond in this JSON format:
 {
   "recommendation": "BUY/SELL/HOLD",
-  "reason": "Short explanation."
+  "reason": "Brief explanation of your recommendation."
 }
   `;
 }
 
-// Call OpenAI API
+// Call OpenAI API with the generated prompt
 async function callOpenAI(prompt) {
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -193,17 +168,23 @@ async function callOpenAI(prompt) {
     }),
   });
 
-  if (!response.ok) throw new Error(`OpenAI API Error: ${response.statusText}`);
+  if (!response.ok) {
+    throw new Error(`OpenAI API Error: ${response.statusText}`);
+  }
 
   const { choices } = await response.json();
   const content = choices[0]?.message?.content?.trim();
   const jsonMatch = content.match(/\{[\s\S]*\}/);
 
-  if (!jsonMatch) throw new Error('Invalid AI response format.');
+  if (!jsonMatch) {
+    console.error('AI Response:', content);
+    throw new Error('Invalid AI response format.');
+  }
 
   try {
     return JSON.parse(jsonMatch[0]);
-  } catch {
+  } catch (err) {
+    console.error('Error parsing AI response:', err);
     throw new Error('Failed to parse AI response.');
   }
 }
