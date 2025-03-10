@@ -9,6 +9,7 @@
         "lint": "next lint"
     },
     "dependencies": {
+        "@google-cloud/bigquery": "^7.7.0",
         "@netlify/blobs": "^8.0.1",
         "blobshape": "^1.0.0",
         "bright": "^0.8.5",
