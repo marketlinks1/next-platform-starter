@@ -1,34 +1,47 @@
-const { google } = require("googleapis");
+const { execSync } = require("child_process");
 const { BigQuery } = require("@google-cloud/bigquery");
+
+async function ensureDependencies() {
+  try {
+    require.resolve("@google-cloud/bigquery"); // Check if installed
+  } catch (e) {
+    console.log("🚀 Installing dependencies...");
+    execSync("npm install @google-cloud/bigquery", { stdio: "inherit" });
+  }
+}
 
 exports.handler = async (event) => {
   try {
-    // Decode the Base64 Key from Netlify Environment Variable
-    const credentialsBase64 = process.env.GOOGLE_APPLICATION_CREDENTIALS_BASE64;
-    const credentialsJson = JSON.parse(Buffer.from(credentialsBase64, "base64").toString("utf8"));
+    // Ensure dependencies are installed
+    await ensureDependencies();
 
-    // Initialize BigQuery Client with Decoded Credentials
-    const bigquery = new BigQuery({ credentials: credentialsJson });
+    // Set up BigQuery client
+    const bigquery = new BigQuery();
 
-    // Example Query: Fetch Sentiment Data
+    // Define the SQL query
     const query = `
-      SELECT symbol, sentiment, COUNT(*) as count
+      SELECT symbol, sentiment, publishedDate
       FROM \`the-market-links-12bef.news_analysis.news_sentiment\`
-      GROUP BY symbol, sentiment
-      ORDER BY count DESC
+      WHERE publishedDate >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
+      ORDER BY publishedDate DESC
+      LIMIT 30
     `;
 
+    // Run query
     const [rows] = await bigquery.query(query);
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ success: true, data: rows }),
+      body: JSON.stringify(rows),
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
     };
-
   } catch (error) {
     return {
       statusCode: 500,
-      body: JSON.stringify({ success: false, error: error.message }),
+      body: JSON.stringify({ error: error.message }),
     };
   }
 };
