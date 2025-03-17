@@ -1,7 +1,6 @@
 export default async (request, context) => {
   // Your allowed origins - including both www and non-www versions
   const allowedOrigins = [
-    "https://amldash.webflow.io",
     "https://themarketlinks.com",
     "https://www.themarketlinks.com"  // Added the www version
   ];
