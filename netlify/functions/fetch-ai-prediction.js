@@ -23,8 +23,7 @@ const db = admin.firestore();
 
 // Define allowed origins
 const allowedOrigins = [
-  'https://amldash.webflow.io',
-  'https://www.themarketlinks.com'
+    'https://www.themarketlinks.com'
 ];
 
 exports.handler = async (event) => {
