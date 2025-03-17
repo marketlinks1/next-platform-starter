@@ -28,7 +28,7 @@ exports.handler = async (event, context) => {
 
   // Get the origin from the request headers
   const origin = event.headers.origin;
-  const allowedOrigins = ['https://amldash.webflow.io']; // Add any other allowed origins here
+  const allowedOrigins = ['https://amldash.webflow.io','https://themarketlinks.com','https://www.themarketlinks.com']; // Add any other allowed origins here
 
   let corsHeader = '';
 
