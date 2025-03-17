@@ -21,8 +21,16 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
+// Define allowed origins
+const allowedOrigins = [
+  'https://amldash.webflow.io',
+  'https://www.themarketlinks.com'
+];
+
 exports.handler = async (event) => {
-  const corsHeader = event.headers.origin || 'https://amldash.webflow.io';
+  const origin = event.headers.origin;
+  // Use the incoming origin if it's in our allowed list, otherwise default to the first allowed origin
+  const corsHeader = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
 
   // Handle preflight CORS requests
   if (event.httpMethod === 'OPTIONS') {
